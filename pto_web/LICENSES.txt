@@ -1,0 +1,34 @@
+Playhouse Disney Preschool Time Online - browser player: licences and credits
+================================================================================
+
+This folder does not contain the game or any file of it. The game's program, pictures, movies and sounds belong to their owners
+and come from your own copy. Everything in this folder that is not listed below was written for this player.
+
+Parts that are built from, or checked against, other projects
+--------------------------------------------------------------
+
+emu/bink.js, emu/bink_tables.js
+    Bink 1 video and audio decoding. The bitstream handling follows the format as implemented in FFmpeg
+    (libavcodec/bink.c, binkdsp.c, binkaudio.c); the tables are generated from FFmpeg's binkdata.h
+    (tools/gen_bink_tables.js in the development tree).
+    FFmpeg is licensed under the GNU Lesser General Public License, version 2.1 or later. https://ffmpeg.org
+    These two files are ordinary, readable JavaScript: you can read, change and replace them.
+    The licence text: https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
+
+emu/smk.js
+    Smacker video decoding (2.0.0). It follows the format as implemented in FFmpeg (libavcodec/smacker.c) and was checked frame by
+    frame against FFmpeg's output; the same LGPL 2.1 or later note as above applies.
+
+emu/mp3.js, emu/mp3tab.js
+    MP3 (Layer III) decoding is a port of minimp3 by lieff, https://github.com/lieff/minimp3 , released under CC0 1.0
+    (public domain dedication). No conditions; credit is given here.
+
+emu/archives.js
+    The reader for Wise installer programs. Its handling of the installer's file overlay was checked against the notes of the
+    REWise project (GPL-3.0). No code from REWise is used here.
+
+Not included, optional
+----------------------
+
+Ruffle (https://ruffle.rs) shows the game's Flash movies when you put its self-hosted web build in the ruffle/ folder.
+Ruffle is licensed under the MIT or the Apache-2.0 licence, at your choice. Keep Ruffle's own licence files with it.
