@@ -1,5 +1,6 @@
 /* RIFF/WAVE reader and decoder: PCM (8/16 bit), IMA ADPCM (format 0x11, what nearly all of the game's sounds are) and MS ADPCM (format 2).
- *   EMU.wavInfo(bytes)   -> {format, ch, rate, bits, blockAlign, samplesPerBlock, dataOff, dataLen, factSamples, samples} | null
+ *   EMU.wavInfo(bytes)   -> {format, ch, rate, bits, blockAlign, samplesPerBlock, dataOff, dataLen, dataDeclared, factSamples, factIgnored, samples} | null
+ *        (dataDeclared: what the header says the sound is long; dataLen: what is there. factIgnored: a fact chunk that was too far off to be believed, else -1)
  *   EMU.wavDecode(bytes) -> {rate, ch, frames, pcm: Int16Array (interleaved)} | null
  *   EMU.wavBuild(rate, ch, pcm) -> Uint8Array: a 16 bit PCM RIFF/WAVE image
  */
@@ -14,7 +15,7 @@
   function wavInfo(b) {
     if (!b || b.length < 20 || b[0] !== 0x52 || b[1] !== 0x49 || b[2] !== 0x46 || b[3] !== 0x46 || b[8] !== 0x57 || b[9] !== 0x41 || b[10] !== 0x56 || b[11] !== 0x45) return null;
     const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
-    let i = 12, fmt = null, dataOff = -1, dataLen = 0, fact = -1;
+    let i = 12, fmt = null, dataOff = -1, dataLen = 0, fact = -1, declared = 0;
     while (i + 8 <= b.length) {
       const id = String.fromCharCode(b[i], b[i + 1], b[i + 2], b[i + 3]); let sz = dv.getUint32(i + 4, true);
       const body = i + 8;
@@ -23,7 +24,7 @@
         if (sz >= 20 && body + 20 <= b.length && (fmt.format === 0x11 || fmt.format === 2)) fmt.samplesPerBlock = dv.getUint16(body + 18, true);
         if (fmt.format === 0xFFFE && sz >= 40 && body + 26 <= b.length) fmt.format = dv.getUint16(body + 24, true);
       } else if (id === 'fact' && sz >= 4) fact = dv.getUint32(body, true);
-      else if (id === 'data') { dataOff = body; if (body + sz > b.length) sz = b.length - body; dataLen = sz; break; }
+      else if (id === 'data') { dataOff = body; declared = sz; if (body + sz > b.length) sz = b.length - body; dataLen = sz; break; }
       i = body + sz + (sz & 1);
     }
     if (!fmt || dataOff < 0) return null;
@@ -36,8 +37,11 @@
       samples = full * fmt.samplesPerBlock;
       if (rest > 4 * fmt.ch) samples += (fmt.format === 0x11) ? 1 + Math.floor((rest - 4 * fmt.ch) * 2 / fmt.ch) : 2 + Math.floor((rest - 7 * fmt.ch) * 2 / fmt.ch);
     }
-    if (fact >= 0 && fact < samples && fmt.format !== 1) samples = fact;
-    return Object.assign(fmt, { dataOff, dataLen, factSamples: fact, samples });
+    /* The fact chunk of a compressed sound says how many samples it holds, which is a little less than what its last block can carry. A value
+     * that is further off than that is wrong (a file that was edited later): the sound system plays the blocks that are there, and so do we. */
+    let factIgnored = -1;
+    if (fact >= 0 && fact < samples && fmt.format !== 1) { if (samples - fact < Math.max(1, fmt.samplesPerBlock | 0)) samples = fact; else factIgnored = fact; }
+    return Object.assign(fmt, { dataOff, dataLen, dataDeclared: declared, factSamples: fact, factIgnored, samples });
   }
 
   function decodeIma(b, info) {

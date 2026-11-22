@@ -81,6 +81,7 @@
       }
       if (!f) { if (m.opts.traceFiles) m.log('  [file] open FAIL ' + path); setErr(2); return INVALID; }
       if (m.opts.traceFiles) m.log('  [file] open ' + path + ' (' + f.size + ' bytes)');
+      if (path.length > 4 && /\.swf$/i.test(path)) m.lastSwf = { key: m.vfsKey ? m.vfsKey(full) : null, size: f.size, at: m.now() };      // (the Flash control is given such a movie as bytes: this says where they came from)
       return m.newHandle({ type: 'file', f, pos: 0, write: false, path: low });
     });
     d('ReadFile', 5, (m, h, buf, n, pRead, ovl) => {

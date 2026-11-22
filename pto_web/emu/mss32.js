@@ -10,13 +10,28 @@
   const _f = new Float32Array(1), _i = new Int32Array(_f.buffer);
   const f32 = v => { _i[0] = v; return _f[0]; };
 
+  const LONG_S = 1.5;                                              // a sound at least this long is a voice (or music): ?debug tells when it starts and ends
+
   class MilesSample {
     constructor(m, handle) {
       this.m = m; this.handle = handle; this.status = SMP_DONE; this.pcm = null; this.dec = null; this.ch = 1; this.frames = 0; this.fileRate = 22050; this.rate = 22050;
-      this.pos = 0; this.loops = 1; this.loopsLeft = 1; this.gl = 1; this.gr = 1; this.name = '';
+      this.pos = 0; this.loops = 1; this.loopsLeft = 1; this.gl = 1; this.gr = 1; this.name = ''; this.noted = false;
     }
-    play() { this.pos = 0; this.loopsLeft = this.loops; this.status = SMP_PLAYING; this.m.mixer.add(this); }
-    stop() { this.m.mixer.remove(this); }
+    /* what the mixer (dsound.js) asks of a source: a sample does not skip over a hold-up of the worker, and a one-shot sound (a voice, an effect) must reach the speaker whole */
+    get holds() { return true; }
+    get keeps() { return this.loops !== 0; }
+    label() { return this.name; }
+    play() { this.pos = 0; this.loopsLeft = this.loops; this.status = SMP_PLAYING; this.m.mixer.add(this); this.note('starts'); }
+    stop() { this.note('stopped by the game'); this.m.mixer.remove(this); }
+    /** ?debug: the start and the end of a long sound are told in the log (with how much of it was played) */
+    note(what) {
+      const m = this.m; if (!m.opts.soundLog || this.rate <= 0) return;
+      const dur = this.frames / this.rate;
+      if (what === 'starts') { this.noted = dur >= LONG_S; if (this.noted) m.log('[sound] voice starts: ' + this.name + ' (' + dur.toFixed(1) + ' s' + (this.loops === 1 ? '' : this.loops === 0 ? ', repeating' : ', ' + this.loops + ' times') + ')'); return; }
+      if (!this.noted) return;
+      this.noted = false;
+      m.log('[sound] voice ' + (what === 'ends' ? 'ends: ' : what + ': ') + this.name + ' (' + Math.min(dur, this.pos / this.rate).toFixed(1) + ' s of ' + dur.toFixed(1) + ' s)');
+    }
     mix(out, n, outRate) {
       if (this.status !== SMP_PLAYING || !this.pcm) { this.m.mixer.remove(this); return; }
       const frames = this.frames, step = this.rate / outRate, inf = this.loops === 0;
@@ -25,7 +40,7 @@
         pos += n * step;
         while (pos >= frames) {
           if (inf || this.loopsLeft > 1) { pos -= frames; if (!inf) this.loopsLeft--; if (frames === 0) { pos = 0; break; } }
-          else { this.status = SMP_DONE; this.m.mixer.remove(this); pos = frames; break; }
+          else { this.status = SMP_DONE; this.m.mixer.remove(this); pos = frames; this.pos = pos; this.note('ends'); break; }
         }
         this.pos = pos; return;
       }
@@ -34,7 +49,7 @@
       for (let i = 0; i < n; i++) {
         if (pos >= frames) {
           if (inf || this.loopsLeft > 1) { pos -= frames; if (!inf) this.loopsLeft--; if (pos >= frames) pos = 0; }
-          else { this.status = SMP_DONE; this.m.mixer.remove(this); pos = frames; break; }
+          else { this.status = SMP_DONE; this.m.mixer.remove(this); pos = frames; this.pos = pos; this.note('ends'); break; }
         }
         const i0 = pos | 0, fr = pos - i0, i1 = i0 + 1 < frames ? i0 + 1 : i0;
         if (ch === 1) { const a = pcm[i0], v = a + (pcm[i1] - a) * fr; out[2 * i] += v * gl; out[2 * i + 1] += v * gr; }
@@ -55,6 +70,12 @@
     const setErrStr = s => { lastErr = s; errStr = m.scratchStr(s.substr(0, 126)); };
     errStr = m.scratchStr(lastErr);
     const sync = () => m.mixer.sync(m.now());
+    /** ?debug: a sound file whose header and contents do not agree (what is played is told, so that a voice that is shorter than it should be can be explained) */
+    const wavNotes = (w, what) => {
+      if (!m.opts.soundLog || !w) return;
+      if (w.dataDeclared > w.dataLen) m.log('[sound] NOTE: a sound file is cut short: its header promises ' + w.dataDeclared + ' bytes of sound, ' + w.dataLen + ' are there (' + what + ')');
+      if (w.factIgnored >= 0) m.log('[sound] NOTE: a sound file says that it holds ' + w.factIgnored + ' samples, but its data holds ' + w.samples + ': all of the data is played (' + what + ')');
+    };
     const retFloat = v => { c.fpush(v); };
 
     d('startup', 0, () => 1);
@@ -89,7 +110,8 @@
       if (bytes[0] === 0x52 && bytes[1] === 0x49) dec = EMU.wavDecode(bytes);
       else if (EMU.mp3Decode) dec = EMU.mp3Decode(bytes.slice());           // sound is made as it plays; the file image may be reused by the game
       if (!dec) { setErrStr('Invalid or unsupported sound file'); trace('set_named_sample_file ' + nm + ' (' + size + ' bytes): not decodable'); return 0; }
-      s.pcm = dec.pcm; s.dec = dec.ensure ? dec : null; s.ch = dec.ch; s.frames = dec.frames; s.fileRate = s.rate = dec.rate; s.name = nm; s.pos = 0; s.status = SMP_DONE; s.loops = 1;
+      s.pcm = dec.pcm; s.dec = dec.ensure ? dec : null; s.ch = dec.ch; s.frames = dec.frames; s.fileRate = s.rate = dec.rate; s.name = nm; s.pos = 0; s.status = SMP_DONE; s.loops = 1; s.noted = false;
+      wavNotes(dec.info, 'set_named_sample_file ' + nm);
       trace('sample 0x' + S.toString(16) + ' <- ' + nm + ' ' + dec.rate + ' Hz ' + dec.ch + ' ch ' + dec.frames + ' frames');
       return 1;
     });
@@ -108,6 +130,7 @@
       const riff = Math.min(m.rd32(data + 4) + 8, 64 * 1024 * 1024);
       const w = EMU.wavInfo(c.u8.subarray(data, data + riff));
       if (!w) return 0;
+      wavNotes(w, 'WAV_info');
       m.wr32(info, w.format); m.wr32(info + 4, data + w.dataOff); m.wr32(info + 8, w.dataLen); m.wr32(info + 12, w.rate); m.wr32(info + 16, w.bits);
       m.wr32(info + 20, w.ch); m.wr32(info + 24, w.samples); m.wr32(info + 28, w.blockAlign); m.wr32(info + 32, 0);
       return 1;
@@ -125,5 +148,6 @@
     d('compress_ADPCM', 3, () => { setErrStr('ADPCM compression is not available'); m.log('  [mss] AIL_compress_ADPCM called (not supported)'); return 0; });
     d('mem_free_lock', 1, (m, p) => { if (p) m.free(p); });
   }
+  EMU.MilesSample = MilesSample;
   EMU.installMss32 = install;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

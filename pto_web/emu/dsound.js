@@ -27,12 +27,25 @@
   const dbGain = v => (v <= -10000 ? 0 : Math.pow(10, v / 2000));       // hundredths of a decibel -> amplitude
 
   /* ------------------------------------------------------------------------------------------------ mixer */
+  /* The game's clock keeps running while the worker is busy (the game loads a big picture, a slow computer ...), but sound can only be
+   * made when the worker gets to it. Sound that arrives late and in one piece cannot be played in time, so what has to be done with the
+   * time that was lost depends on what the sound is:
+   *  - the sound of a video clip belongs to its pictures, which were skipped over as well: it skips with them (see StreamSource);
+   *  - a sample (a voice, a sound effect: Miles `holds`) must be heard whole. A line like "Today is ..." that loses its middle is worse
+   *    than one that waits a moment, so a sample does not move on over a hold-up: it goes on where it stopped, and for the game it
+   *    simply takes a little longer. At most HOLD_MS of it is made per visit of the mixer, which is also the most that the page's
+   *    sound player takes in one piece without throwing away the oldest sound.
+   * Without a listener (a test, the harness without sound) nothing is made and every position follows the clock. */
+  const HOLD_MS = 80;
   class Mixer {
     constructor(m) {
       this.m = m; this.rate = 44100; this.sources = new Set(); this.last = null; this.frac = 0; this.attached = false;
       this.ring = new Float32Array(this.rate * 2 * 2); this.rw = 0; this.rr = 0;      // 2 s of stereo, monotonic frame counters
       this.tmp = new Float32Array(this.rate);                                          // render scratch (0.5 s stereo)
       this.streams = new Map(); this.master = 1;
+      this.keepNow = false; this.pullKeep = false;                                     // sound that has to be heard whole (a voice) was made since the last pull() / was in the last pull()
+      this.onHold = null;                                                              // (info) the worker was held up while samples played: {ms, names}
+      this.holds = { count: 0, ms: 0, withSamples: 0 };
     }
     attach() { this.attached = true; this.last = null; }
     /** advance (and, when a listener is attached, render) up to the virtual time `now` (ms) */
@@ -43,13 +56,28 @@
       if (!this.sources.size && !this.attached) { this.frac = 0; return; }        // (with a listener the stream goes on, as silence: a gap then always means a real hold-up)
       const f = dt * this.rate / 1000 + this.frac, n = Math.floor(f); this.frac = f - n;
       if (n <= 0) return;
-      const cap = this.rate >> 1;
-      if (n > cap) { for (const s of this.sources) s.mix(null, n - cap, this.rate); this.mixBlock(cap); } else this.mixBlock(n);
+      if (!this.attached) { for (const s of this.sources) s.mix(null, n, this.rate); return; }     // nobody listens: the positions follow the clock
+      const rate = this.rate, hold = Math.round(rate * HOLD_MS / 1000);
+      if (n <= hold) { this.mixBlock(n); return; }                                  // the usual visit
+      // a hold-up of the worker: `n` frames of the game's time have passed since the last visit
+      let video = false;
+      for (const s of this.streams.values()) if (s.wr - s.rd > 1) { video = true; break; }
+      const made = Math.min(n, video ? rate >> 1 : hold);                           // how much sound is made now (the last `made` frames of the time that passed)
+      if (made >= n) { this.mixBlock(n); return; }                                  // (a clip's sound that is queued: all of it is made, as ever)
+      let names = null;
+      for (const s of this.sources) {
+        if (s.holds) { if (!names) names = []; const nm = s.label ? s.label() : ''; if (nm && !names.includes(nm) && names.length < 4) names.push(nm); }
+        else s.mix(null, n - made, rate);                                           // video sound: skip over the hold-up, as the pictures do
+      }
+      const ms = Math.round((n - made) / rate * 1000);
+      this.holds.count++; this.holds.ms += ms; if (names) this.holds.withSamples++;
+      if (names && this.onHold) this.onHold({ ms, names });
+      this.mixBlock(made);                                                          // samples go on where they stopped
     }
     mixBlock(n) {
       if (!this.attached) { for (const s of this.sources) s.mix(null, n, this.rate); return; }
       const out = this.tmp.subarray(0, n * 2); out.fill(0);
-      for (const s of this.sources) s.mix(out, n, this.rate);
+      for (const s of this.sources) { if (s.keeps) this.keepNow = true; s.mix(out, n, this.rate); }
       const R = this.ring, cap = R.length >> 1, g = this.master;
       for (let i = 0; i < n; i++) {
         let l = out[2 * i] * g, r = out[2 * i + 1] * g;
@@ -58,11 +86,13 @@
       }
       if (this.rw - this.rr > cap) this.rr = this.rw - cap;                             // listener too slow: drop the oldest
     }
-    /** interleaved stereo floats, at most maxFrames frames */
+    /** interleaved stereo floats, at most maxFrames frames. `pullKeep` then says whether sound that has to be heard whole (a voice) is in them. */
     pull(maxFrames) {
       const R = this.ring, cap = R.length >> 1, n = Math.min(maxFrames, this.rw - this.rr), out = new Float32Array(n * 2);
       for (let i = 0; i < n; i++) { const o = ((this.rr + i) % cap) * 2; out[2 * i] = R[o]; out[2 * i + 1] = R[o + 1]; }
-      this.rr += n; return out;
+      this.rr += n;
+      this.pullKeep = this.keepNow; if (this.rw === this.rr) this.keepNow = false;      // (if more is waiting, the next pull has to say it, too)
+      return out;
     }
     add(s) { this.sources.add(s); }
     remove(s) { this.sources.delete(s); }
