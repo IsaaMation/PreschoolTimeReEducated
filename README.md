@@ -26,7 +26,7 @@ You can supply multiple versions and lessons at once, then select the version an
 
 ## 1. Put your game files in `game/`
 
-The player takes any mix of these and works out the rest by itself (it looks inside, not only at the names):
+The player takes any mix of these and works out the rest by itself (it looks inside, not only at the names). And don't worry if you don't have those versions. These are just examples:
 
 | File | Version | Notes |
 | --- | --- | --- |
