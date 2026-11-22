@@ -1,28 +1,40 @@
 # Playhouse Disney Preschool Time Online — Re-Educated!
 
-**Bring Preschool Time Online back to life!**
+Remember *Playhouse Disney Preschool Time Online*? The classic educational game from Disney Online and ImaginEngine?
 
-Since the summer of 2011, *Disney's Preschool Time Online* has been inaccessible through its original online service. With the original servers long gone, revisiting this childhood classic hasn't exactly been easy.
+Now you can revisit it right in your browser!
 
-Until now.
+This project brings the original Windows game back to life using a JavaScript-powered x86 emulator. It supports versions **2.0.0, 2.0.3, and 2.0.6**, allowing you to play the original game without needing to install it on your computer.
 
-This project brings the original Windows versions of **Playhouse Disney Preschool Time Online** (2.0.0, 2.0.3, and 2.0.6) back to your browser!
+Movies, sounds, activities, and other features are handled by the browser player, with optional Ruffle support for Flash content.
 
-Whether you grew up playing with Bear or Mickey, you can now revisit those memories on your own computer — without needing the original online servers.
+**Please note:** This project does not include the original game files. You'll need to supply your own installers and archives.
 
-The player runs the original game program through a JavaScript-based x86 emulator, recreating the Windows environment the game expects. Just provide your own game files, start the local server, and you're ready to play!
+## What's Included?
 
-## Before You Begin
+The player supports three releases of *Playhouse Disney Preschool Time Online*:
 
-For copyright-related reasons, this repository does **not** include the original game installers, lesson archives, or Ruffle's Self-Hosted Web Build.
+| Version | Game files |
+| --- | --- |
+| **2.0.0** | Original game program and associated lesson archives |
+| **2.0.3** | Updated game program, shared activities, and lesson archives |
+| **2.0.6** | Updated game program, shared activities, and lesson archives |
 
-You'll need to provide those files yourself.
+Each version has its own program and associated data. The player automatically detects the versions and lessons available from the files you provide.
 
-- Place your Preschool Time Online installers and ZIP archives in the `game/` folder.
-- If you'd like to play the game's Flash movies, place Ruffle's Self-Hosted Web Build in the `ruffle/` folder.
+You can supply multiple versions and lessons at once, then select the version and lesson you want to play from the start screen.
 
-See the setup instructions below for everything you need to get started.
+## 1. Put your game files in `game/`
 
-**Your game files stay yours.** When running locally, the player reads them directly from your computer. The built-in server stand-in handles the game's old online features without contacting Disney's original servers.
+The player takes any mix of these and works out the rest by itself (it looks inside, not only at the names):
 
-Enjoy a little trip back to preschool!
+| File | Version | Notes |
+| --- | --- | --- |
+| `PlayhouseInstall2.0.0.exe`, `PlayhouseInstall2.0.3.exe`, `PlayhouseInstall2.0.6.exe` | the version in the name | the installers (Wise). The player reads the game's files straight out of them, nothing is run |
+| `Playhouse Disney Preschool Time Online 2.0.6.zip` (or any zip with the game's `Data` folder) | 2.0.6 | the program and its data |
+| `PackageBC2.0.3.zip`, `PackageBC2.0.6.zip` … | by name | the shared activities |
+| `LP0316_lesson_0316_2.0.3.zip`, `LP0516_lesson_0516_2.0.6.zip` … | by name and lesson number | one lesson each (`LP02xx` = 2.0.0, `LP03xx` = 2.0.3, `LP05xx` = 2.0.6) |
+| one big zip that holds several of the above | | the zips inside it must be stored **without compression** (the player cannot read a compressed zip inside a zip in place) |
+
+- The page lists the versions it finds and the lessons of each one. The lesson you pick is the one the game starts with.
+- A version needs the game program: an installer, or a zip with `DisneyPO.exe`. **Installers inside a big zip are compressed**, so put the standalone `PlayhouseInstall2.0.3.exe` next to the big zip
