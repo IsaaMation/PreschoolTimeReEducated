@@ -6,7 +6,7 @@
  * button on the screen, and a "VideoName".  The game shows every button where its list puts it, and a click starts a little Flash movie
  * (stub.swf) with the VideoName as its FlashVars; that movie played the video from the server.  Here the page keeps its own list of videos,
  * the stand-in server (server.js) gives the game a list made from it, with button pictures made by the page, and the player (flashctl.js
- * and the page) plays the clicked video with the browser's own player instead of the Flash movie.
+ * and the page) plays the clicked video in a player of its own (the browser's video) instead of the Flash movie.
  *
  * What the game reads from the list (CBackyardVideo::OnStartRoom, 2.0.3 at 0x4201e0):
  *     [Video]

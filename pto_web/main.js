@@ -291,18 +291,43 @@
       if (r && r.catch) r.catch(e => { if (!settled) { settled = true; clearTimeout(mv.timer); failMovie(mv, e); } });
     } catch (e) { settled = true; clearTimeout(mv.timer); failMovie(mv, e); return; }
   }
-  /** The Sing-Along room (the TV in the Backyard) started one of its videos: the browser's own player is put on the TV's screen (the game's window for it),
+  /** The Sing-Along room (the TV in the Backyard) started one of its videos: the page's own player is put on the TV's screen (the game's window for it),
    * and the game is told when the video is over, which is what its Flash player did when it had played the stream to its end. */
   function showVideo(mv) {
     if (mv.api) { mv.hidden = false; mv.el.style.display = ''; setPaused(mv, false); layoutMovie(mv); return; }       // already there: it was paused or hidden
     const o = window.PTOVideos && PTOVideos.open(mv.video, { muted: () => muted, onEnd: why => { fnote('video ' + mv.video + ': ' + why + ' (the game is told)'); post({ type: 'videoEnded', id: mv.id }); } });
     if (!o) { vnote('[videos] ' + mv.video + ' is not in the list any more'); notice('That video is not in the list any more.'); post({ type: 'videoEnded', id: mv.id }); return; }
     mv.el = o.el; mv.api = o.api; mv.started = true; rec(mv, 'started');
-    flashLayer.appendChild(mv.el); layoutMovie(mv);
+    // (the player lies over the game's picture, so the mouse over it is not the canvas's: the game is still told where the mouse is, so that its own arrow
+    // goes on following it underneath, and the page draws that arrow over the video: see arrowAt)
+    mv.el.addEventListener('pointermove', e => { send(Object.assign({ type: 'mousemove' }, gamePos(e))); });
+    flashLayer.appendChild(mv.el); layoutMovie(mv); ensureArrow();
+  }
+  /** The game's mouse arrow is a picture in its own data (Common/arrow.tga).  The video lies over the game's picture, which hides the arrow the game draws
+   * there, so the page draws the same arrow over the video (PTOVideos).  Its file is read through the worker, once. */
+  let arrowState = 'idle';                             // idle | loading | ready | failed
+  async function ensureArrow() {
+    if (arrowState !== 'idle' || !window.PTOVideos || !PTOVideos.cursorFile) return;
+    arrowState = 'loading';
+    try {
+      const r = await flashFileResponse(FLASH_FILES + PTOVideos.cursorFile);
+      if (!r.ok) throw new Error(PTOVideos.cursorFile + ' is not in the game\'s data');
+      if (!PTOVideos.setCursorSprite(new Uint8Array(await r.arrayBuffer()))) throw new Error(PTOVideos.cursorFile + ' is not a picture the page can read');
+      arrowState = 'ready'; arrowAt(lastPointer);                       // (a video that is already on show gets its arrow now)
+    } catch (e) { arrowState = 'failed'; vnote('[videos] the game\'s mouse arrow could not be read (' + (e && e.message || e) + '): over the video the browser\'s own arrow shows'); }
+  }
+  /** where the mouse is (the last pointer event of the stage), so that an arrow can be drawn the moment a video appears or the window changes size */
+  let lastPointer = null, videoUp = 0;                 // videoUp: how many video players are on show
+  function arrowAt(e) {
+    if (!videoUp) return;
+    let gx = null, gy = null;
+    if (e && e.pointerType !== 'touch') { const c = cvs.getBoundingClientRect(); if (c.width) { gx = Math.floor((e.clientX - c.left) * cvs.width / c.width); gy = Math.floor((e.clientY - c.top) * cvs.height / c.height); } }
+    for (const mv of movies.values()) if (mv.video && mv.api && mv.api.cursor && mv.el && !mv.hidden) mv.api.cursor(gx, gy);
   }
   /** the room opened (a list of videos was asked for): with none in it, one of the NOVIDEOS sounds is played */
   function onVideoRoom(d) {
     vnote('[videos] the Sing-Along room opened with ' + d.count + ' video(s) (list ' + d.gen + ')');
+    if (d.count) ensureArrow();
     if (!d.count && window.PTOVideos) setTimeout(() => { PTOVideos.noVideos().catch(() => { }); }, 1000);       // (the room has to fade in first)
   }
   /** Ruffle's own boxes (the hardware-acceleration warning, the save manager, the right-click menu, the play button) have no place over this game */
@@ -369,6 +394,7 @@
       st.left = (c.left - a.left - stage.clientLeft + r.x * k) + 'px'; st.top = (c.top - a.top - stage.clientTop + r.y * k) + 'px'; st.width = (r.w * k) + 'px'; st.height = (r.h * k) + 'px';      // (the stage's 1 px border is outside what it positions its children in)
     }
     flashChanged();
+    if (mv.video) arrowAt(lastPointer);
   }
   function hideMovie(mv) { setPaused(mv, true); if (mv.el) mv.el.style.display = 'none'; mv.hidden = true; flashChanged(); }
   function closeMovie(mv, keepRecord) {
@@ -381,8 +407,8 @@
   }
   /** the layer is only there while a movie is on show */
   function flashChanged() {
-    let shown = 0, whole = false;
-    for (const mv of movies.values()) if (mv.el && !mv.hidden) { shown++; if (mv.whole) whole = true; }
+    let shown = 0, whole = false; videoUp = 0;
+    for (const mv of movies.values()) if (mv.el && !mv.hidden) { shown++; if (mv.whole) whole = true; if (mv.video) videoUp++; }
     const was = !flashLayer.classList.contains('hide');
     let plain = false; for (const mv of movies.values()) if (mv.el && !mv.hidden && !mv.video) plain = true;       // (a video has its own controls, and the game's red X under the TV)
     flashLayer.classList.toggle('hide', !shown); flashSkip.classList.toggle('hide', !plain);
@@ -617,6 +643,8 @@
     return { x: clamp(Math.floor((e.clientX - r.left) * cvs.width / r.width), 0, cvs.width - 1), y: clamp(Math.floor((e.clientY - r.top) * cvs.height / r.height), 0, cvs.height - 1) };
   }
   cvs.addEventListener('pointermove', e => { send(Object.assign({ type: 'mousemove' }, gamePos(e))); });
+  stage.addEventListener('pointermove', e => { lastPointer = e; arrowAt(e); });          // (from the canvas and from a video player over it)
+  stage.addEventListener('pointerleave', () => { lastPointer = null; arrowAt(null); });
   cvs.addEventListener('pointerdown', e => {
     if (e.button > 2) return;
     try { cvs.setPointerCapture(e.pointerId); } catch (x) { /* ignore */ }

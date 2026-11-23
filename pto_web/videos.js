@@ -5,7 +5,8 @@
  *   - files added on the page ("Videos..." button, or dropped on the page; kept until the page is closed).
  * Each becomes a button on the TV: its picture is made here from a frame of the video (or a plain card with its name until that frame is
  * ready), handed to the worker, whose stand-in server gives the game a list made from them.  A click in the game starts a Flash movie in
- * a window on the TV's screen; the page plays the video there with the browser's own player (open() below) and tells the game when it is over.
+ * a window on the TV's screen; the page plays the video there, in a small player of its own (open() below: the browser's video with controls made
+ * here, and the game's own mouse arrow drawn over it), and tells the game when it is over.
  *
  * With no videos the room is empty, and one of the sounds sounds/NOVIDEOS1.mp3 .. NOVIDEOS8.mp3 is played when it opens.
  */
@@ -197,21 +198,86 @@
     if (myGen === gen) note('[videos] pictures for list ' + myGen + ': ' + done + ' made from the videos, ' + failed + ' left as plain cards');
   }
 
+  /* ------------------------------------------------------------------------------------------ the game's mouse arrow */
+  /* The game draws its own mouse arrow (Common/arrow.tga) into its picture, and the video lies on top of that picture, so the arrow went
+   * under the video: cut off at the TV's edge, and over the video the browser's plain arrow showed instead.  So the page draws the same arrow
+   * on top of the video itself: inside the player's box, which cuts it off where the TV ends (outside it the game's own arrow is on show, and
+   * the two meet exactly).  The picture of the arrow is read from the game's own data (main.js asks the worker for it), not shipped with the page. */
+  const HOT = { x: 0, y: 2 };                          // the game puts the picture's top-left corner at (mouse x - 0, mouse y - 2): the arrow's tip is at the mouse
+  let sprite = null;                                   // { w, h, canvas }
+  const spriteWaiters = [];                            // players that were opened before the picture was there
+  P.cursorFile = 'common/arrow.tga';
+  P.hasCursorSprite = () => !!sprite;
+  /** a TGA picture (type 2 or 10, 24 or 32 bits: what the game's cursor files are) -> { w, h, data (RGBA, top row first) }, or null */
+  P.decodeTga = u8 => {
+    try {
+      if (!u8 || u8.length < 18) return null;
+      const idLen = u8[0], type = u8[2], w = u8[12] | (u8[13] << 8), h = u8[14] | (u8[15] << 8), bpp = u8[16], desc = u8[17];
+      if (u8[1] !== 0 || (type !== 2 && type !== 10) || (bpp !== 24 && bpp !== 32) || !w || !h || w > 512 || h > 512) return null;
+      const bytes = bpp >> 3, topDown = !!(desc & 0x20), rightToLeft = !!(desc & 0x10), hasAlpha = bpp === 32 && (desc & 15) > 0;
+      const total = w * h, out = new Uint8ClampedArray(total * 4);
+      let p = 18 + idLen, n = 0;
+      const put = q => {                               // the next pixel of the file, which is at u8[q]
+        const row = (n / w) | 0, col = n - row * w, y = topDown ? row : h - 1 - row, x = rightToLeft ? w - 1 - col : col, o = (y * w + x) * 4;
+        out[o] = u8[q + 2]; out[o + 1] = u8[q + 1]; out[o + 2] = u8[q]; out[o + 3] = hasAlpha ? u8[q + 3] : 255; n++;
+      };
+      if (type === 2) { if (p + total * bytes > u8.length) return null; while (n < total) { put(p); p += bytes; } }
+      else {
+        while (n < total) {
+          if (p >= u8.length) return null;
+          const c = u8[p++], cnt = (c & 127) + 1;
+          if (c & 128) { if (p + bytes > u8.length) return null; for (let i = 0; i < cnt && n < total; i++) put(p); p += bytes; }
+          else { if (p + cnt * bytes > u8.length) return null; for (let i = 0; i < cnt && n < total; i++) { put(p); p += bytes; } }
+        }
+      }
+      return { w, h, data: out };
+    } catch (e) { return null; }
+  };
+  /** the arrow's file (bytes) has been read: players that are open (or open later) draw it.  Returns false when it is not a picture we can read. */
+  P.setCursorSprite = bytes => {
+    const t = P.decodeTga(bytes); if (!t || !doc) return false;
+    const c = doc.createElement('canvas'); c.width = t.w; c.height = t.h;
+    c.getContext('2d').putImageData(new G.ImageData(t.data, t.w, t.h), 0, 0);
+    sprite = { w: t.w, h: t.h, canvas: c };
+    note('[videos] the game\'s mouse arrow (' + t.w + 'x' + t.h + ') is ready to be drawn over the video');
+    for (const f of spriteWaiters.splice(0)) { try { f(); } catch (e) { /* not ours */ } }
+    return true;
+  };
+
   /* ------------------------------------------------------------------------------------------ the player on the TV */
+  const ICON = {
+    play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l12.5-7.5z"/></svg>',
+    pause: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4.5h4.4v15H6zM13.6 4.5H18v15h-4.4z"/></svg>',
+    sound: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9.5h4L12.5 5v14L7 14.5H3z"/><path d="M15.6 8.6a4.8 4.8 0 0 1 0 6.8M18.3 5.8a8.8 8.8 0 0 1 0 12.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+    mute: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9.5h4L12.5 5v14L7 14.5H3z"/><path d="M15.5 9.5l5.5 5M21 9.5l-5.5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+  };
+  const clock = t => { t = isFinite(t) && t > 0 ? Math.floor(t) : 0; const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, s = t % 60; return (h ? h + ':' + (m < 10 ? '0' : '') + m : m) + ':' + (s < 10 ? '0' : '') + s; };
+  P.clock = clock;
   /**
    * The element for the game's window (it is put where the game's window is, by the page) and the little API the page's Flash code uses for
-   * a movie (suspend / resume / volume / dispose).  hooks.onEnd() is called once when the video has played to its end, or cannot be played.
+   * a movie (suspend / resume / volume / dispose, and cursor: where the mouse is, so that the game's arrow is drawn over the video).
+   * hooks.onEnd() is called once when the video has played to its end, or cannot be played.
+   * The player has controls of its own (click the picture or the first button to pause, the bar to seek, the last button for the sound), not the
+   * browser's: the browser's would show its plain arrow over the video, which the game's arrow is meant to replace.
    */
   P.open = (id, hooks) => {
     const it = byId.get(id); if (!it) return null;
+    hooks = hooks || {};
     const box = doc.createElement('div'); box.className = 'videoBox';
     const v = doc.createElement('video');
-    v.controls = true; v.playsInline = true; v.preload = 'auto'; v.disablePictureInPicture = true; v.setAttribute('controlslist', 'nodownload noremoteplayback');
-    v.muted = !!(hooks && hooks.muted && hooks.muted());
+    v.playsInline = true; v.preload = 'auto'; v.disablePictureInPicture = true; v.setAttribute('disableremoteplayback', '');
+    v.muted = !!(hooks.muted && hooks.muted());
     const msg = doc.createElement('div'); msg.className = 'videoMsg'; msg.hidden = true;
-    box.append(v, msg);
-    let ended = false, wasPlaying = false, errTimer = 0;
-    const end = why => { if (ended) return; ended = true; note('[videos] "' + it.file + '": ' + why); if (hooks && hooks.onEnd) hooks.onEnd(why); };
+    const mk = (tag, cls) => { const e = doc.createElement(tag); e.className = cls; return e; };
+    const button = (cls, label) => { const b = mk('button', cls); b.type = 'button'; b.title = label; b.setAttribute('aria-label', label); b.addEventListener('mousedown', e => e.preventDefault()); return b; };      // (a click must not take the keyboard away from the game)
+    const bar = mk('div', 'videoBar'), bPlay = button('vbPlay', 'Pause'), bMute = button('vbMute', 'Sound'), seek = mk('div', 'vbSeek'), fill = mk('div', 'vbFill'), knob = mk('div', 'vbKnob'), time = mk('span', 'vbTime');
+    seek.setAttribute('role', 'slider'); seek.setAttribute('aria-label', 'Position in the video'); seek.append(fill, knob);
+    bar.append(bPlay, seek, time, bMute);
+    const cur = mk('canvas', 'videoCursor'); cur.hidden = true;
+    box.append(v, msg, bar, cur);
+
+    let ended = false, wasPlaying = false, errTimer = 0, idleTimer = 0, dragging = false, idleAtDown = false, downType = '';
+    const end = why => { if (ended) return; ended = true; note('[videos] "' + it.file + '": ' + why); if (hooks.onEnd) hooks.onEnd(why); };
     v.addEventListener('ended', () => end('played to its end'));
     v.addEventListener('error', () => {
       const code = v.error ? v.error.code : 0;
@@ -221,16 +287,71 @@
       msg.hidden = false; note('[videos] "' + it.file + '" could not be played (media error ' + code + ')');
       clearTimeout(errTimer); errTimer = setTimeout(() => end('could not be played'), 7000);
     });
+
+    // ---- the controls
+    const paint = () => {
+      const d = v.duration, f = isFinite(d) && d > 0 ? Math.min(1, v.currentTime / d) : 0;
+      fill.style.width = (f * 100) + '%'; knob.style.left = (f * 100) + '%';
+      seek.setAttribute('aria-valuenow', String(Math.round(f * 100)));
+      time.textContent = clock(v.currentTime) + ' / ' + (isFinite(d) ? clock(d) : '-:--');
+    };
+    const icons = () => {
+      bPlay.innerHTML = v.paused ? ICON.play : ICON.pause; bPlay.title = v.paused ? 'Play' : 'Pause'; bPlay.setAttribute('aria-label', bPlay.title);
+      bMute.innerHTML = v.muted ? ICON.mute : ICON.sound; bMute.title = v.muted ? 'Sound on' : 'Sound off'; bMute.setAttribute('aria-label', bMute.title);
+    };
+    // the bar shows while the mouse moves over the player (and while the video is paused), and goes away after a moment
+    const showBar = () => {
+      box.classList.remove('idle'); clearTimeout(idleTimer);
+      if (!v.paused) idleTimer = setTimeout(() => { if (!v.paused && !dragging && !bar.matches(':hover')) box.classList.add('idle'); else if (!v.paused) showBar(); }, 2500);
+    };
+    const toggle = () => { if (v.paused) { const p = v.play(); if (p && p.catch) p.catch(() => { }); } else v.pause(); };
+    for (const e of ['timeupdate', 'durationchange', 'loadedmetadata', 'seeked']) v.addEventListener(e, paint);
+    for (const e of ['play', 'pause', 'volumechange']) v.addEventListener(e, () => { icons(); showBar(); });
+    bPlay.addEventListener('click', toggle);
+    bMute.addEventListener('click', () => { v.muted = !v.muted; });
+    v.addEventListener('pointerdown', e => { idleAtDown = box.classList.contains('idle'); downType = e.pointerType; });
+    v.addEventListener('click', () => { if (idleAtDown && downType === 'touch') return; toggle(); });         // (a touch on a hidden bar only brings the bar back)
+    box.addEventListener('pointermove', showBar); box.addEventListener('pointerdown', showBar);
+    box.addEventListener('pointerleave', () => { clearTimeout(idleTimer); if (!v.paused && !dragging) idleTimer = setTimeout(() => box.classList.add('idle'), 600); });
+    const seekTo = e => { const d = v.duration; if (!isFinite(d) || d <= 0) return; const r = seek.getBoundingClientRect(); v.currentTime = Math.min(1, Math.max(0, (e.clientX - r.left) / (r.width || 1))) * d; paint(); };
+    seek.addEventListener('pointerdown', e => { if (e.button !== 0) return; dragging = true; try { seek.setPointerCapture(e.pointerId); } catch (x) { /* ignore */ } seekTo(e); e.preventDefault(); });
+    seek.addEventListener('pointermove', e => { if (dragging) seekTo(e); });
+    const seekEnd = () => { dragging = false; };
+    seek.addEventListener('pointerup', seekEnd); seek.addEventListener('pointercancel', seekEnd);
+    seek.addEventListener('mousedown', e => e.preventDefault());
+    icons(); paint(); showBar();
+
+    // ---- the game's arrow
+    let haveSprite = false, curK = 0;
+    const adopt = () => {
+      if (haveSprite || !sprite) return;
+      cur.width = sprite.w; cur.height = sprite.h; cur.getContext('2d').drawImage(sprite.canvas, 0, 0);
+      haveSprite = true; box.classList.add('hascur');                   // (from now on the player hides the browser's own arrow)
+    };
+    adopt(); if (!haveSprite) spriteWaiters.push(adopt);
+    /** where the mouse is, in the game's 800x600 picture (null: not on the page / a touch: no arrow) */
+    const cursorAt = (gx, gy) => {
+      if (!haveSprite) return;
+      const R = V.RECT, bw = box.clientWidth;
+      if (gx === null || gx === undefined || !isFinite(gx) || !isFinite(gy) || !bw) { cur.hidden = true; return; }
+      const x = gx - HOT.x - R.x, y = gy - HOT.y - R.y;
+      if (x >= R.w || y >= R.h || x + sprite.w <= 0 || y + sprite.h <= 0) { cur.hidden = true; return; }       // (none of it is over the TV)
+      const k = bw / R.w;
+      if (k !== curK) { curK = k; cur.style.width = (sprite.w * k) + 'px'; cur.style.height = (sprite.h * k) + 'px'; }
+      cur.style.left = (x * k) + 'px'; cur.style.top = (y * k) + 'px'; cur.hidden = false;
+    };
+
     v.src = it.url;
     const start = v.play();
-    if (start && start.catch) start.catch(e => note('[videos] play() was refused (' + (e && e.name) + '): the controls show the play button'));
+    if (start && start.catch) start.catch(e => note('[videos] play() was refused (' + (e && e.name) + '): the play button starts it'));
     note('[videos] playing "' + it.file + '"' + (it.local ? ' (added on the page)' : ''));
     const api = {
       suspend() { wasPlaying = !v.paused; try { v.pause(); } catch (e) { /* ignore */ } },
       resume() { if (wasPlaying) { const p = v.play(); if (p && p.catch) p.catch(() => { }); } wasPlaying = false; },
       set volume(x) { v.muted = !x; },
       get volume() { return v.muted ? 0 : 1; },
-      dispose() { clearTimeout(errTimer); try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) { /* ignore */ } },
+      cursor: cursorAt,
+      dispose() { clearTimeout(errTimer); clearTimeout(idleTimer); const i = spriteWaiters.indexOf(adopt); if (i >= 0) spriteWaiters.splice(i, 1); try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) { /* ignore */ } },
       video: v, item: it,
     };
     return { el: box, api };

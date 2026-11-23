@@ -118,9 +118,10 @@ in the original game it is empty. The player can give it videos of your own:
    A web server that cannot list a folder needs a file `videos/videos.json` instead: `["01 - Hot Potato.mp4", "02 - The Wheels on the Bus.mp4"]`,
    or `[{"file": "hot-potato.mp4", "title": "Hot Potato"}]` to choose the name that is shown on the button.
 3. Start the game and click the TV in the Backyard. Every video is a button on the TV's screen, with a frame of the video as its picture and its
-   name on it; the button lights up under the mouse. A click plays that video on the TV's screen with the browser's own video player (its own
-   play / pause, volume and seek controls). When the video ends, the game goes on, as it did when its Flash player had played the video to the
-   end. The game's red **X** under the TV stops it.
+   name on it; the button lights up under the mouse. A click plays that video on the TV's screen in a small player of the page's own: click the
+   picture to pause or play, and a bar along its bottom edge (it shows while the mouse moves over the video, and stays while it is paused) has a
+   play / pause button, a seek bar, the time and a sound button. The game's own mouse arrow stays on top of the video. When the video ends,
+   the game goes on, as it did when its Flash player had played the video to the end. The game's red **X** under the TV stops it.
 
 More about it:
 
@@ -133,6 +134,12 @@ More about it:
 * **A video that the browser cannot play** (an MP4 with another kind of video than H.264, an old Flash `.flv`, …) shows a message on the TV, and
   after a few seconds the game is told that the video is over, so that the room does not get stuck. Such a file can be converted:
   `ffmpeg -i in.flv -c:v libx264 -c:a aac out.mp4`.
+* **The mouse arrow.** The game draws its arrow into its own picture, and the video lies over that picture, so the game's arrow would vanish
+  under it (cut off at the TV's edge). The page therefore draws the same arrow, over the video, wherever the mouse is: also when the mouse is
+  just outside the TV and the arrow's body reaches in over the video. The arrow's picture (`Common/arrow.tga`) is read from your own game
+  files, nothing of it comes with the page. The game is still told where the mouse is, so its own arrow follows underneath; clicks on the
+  player stay in the player (they do not press the game's buttons under it). If the picture cannot be read, the browser's plain arrow shows
+  over the video instead, and the log says why.
 * **No videos.** When the room opens with an empty list, one of four spoken clips (`sounds/NOVIDEOS1.mp3` … `NOVIDEOS4.mp3`) is played, picked
   at random but never the same one twice in a row. Clips named `NOVIDEOS5.mp3` … `NOVIDEOS8.mp3` that you put in `sounds/` are used as well.
   The **Sound** button mutes it.
@@ -163,6 +170,21 @@ More about it:
   know about: if the sound still comes after what you see (Bluetooth speakers and some TVs), move it to the right; if the mouse
   feels slow, move it to the left. The setting is kept in the browser. `?avoffset=120` in the address sets it for one visit.
 * Players and settings are kept in the browser (IndexedDB), per site and per browser. **Clear saved data** removes them, and the nickname (below) too.
+* **What the game remembers.** In the original, a few things outlived a visit: the episode the player had reached, the grown-ups' settings (Preferences) and the
+  backyard plant. They come back here too, and stay **in this browser only** (IndexedDB, per site and per browser; nothing is sent anywhere):
+  the game says where the player had got to when it is **left through its own Exit** (the round button at the top right, then *Parents' Corner (Exit)*
+  and *yes*), and the stand-in for Disney's server hands that number back when the game starts, so the next character comes up where the player left off
+  instead of the first one again. Closing the tab without leaving through the game's Exit does not tell the game's server anything (the same as in the original),
+  so the episode is only kept when the game was left the proper way. The Preferences and the plant are kept as the game writes them, whichever way it is left.
+  **Clear saved data** removes all of it. What the original also kept on Disney's server (each player's skill levels per game, favourites, the reports for
+  parents) is **not** restored: that server is gone, and the game starts those afresh.
+* **Parents' Corner and Preferences.** The Exit button's menu has *Parents' Corner (Exit)*, *Keep Playing* and *Preferences*. Preferences ask for the grown-up's
+  password first (and so does leaving the game when the parental lock is on). There are no member accounts any more, so the stand-in accepts **any
+  password**: type anything and press Enter. There you can switch between *Guided Mode* and *Discovery Mode*, limit printing and turn the parental lock on or off;
+  *Save Changes* makes the game start over at its theme map with the new settings. In 2.0.3 the window is headed "MELISSA'S Preferences" (2.0.0 and 2.0.6 say "PLAYER'S"):
+  that program's own code sets the player's first name to "Melissa" whenever Preferences open. In a test with a nickname the game's name string read the nickname until
+  Preferences opened and "Melissa" at every look afterwards (the next 24 seconds, past *Save Changes* and the restart). That is the game's own doing, not a nickname being lost;
+  this player does not change the game's code, so it is left as it was. Where else that name might show was not looked at.
 * **Nickname.** The start card has an optional **Nickname** box. The game shows that name where it would otherwise say "Player" (for
   example "Good Job, Nick!"). It is a **local nickname only**: it is kept in this browser on this computer (in the page's `localStorage`),
   it is **not saved online**, and nothing about it is sent over the internet: the player's built-in stand-in for Disney's server gives it
@@ -180,10 +202,11 @@ More about it:
   file, and a hold-up is taken off its clock, so animations and video clips do not race to catch up. A voice or a sound effect is
   never cut by a hold-up: if the computer is held up while one plays, it waits and goes on where it stopped (see "Voices that were cut off" below).
 * The game's online features talk to a built-in stand-in for Disney's server, which says "nothing to report" to almost everything.
-  Nothing is sent over the internet. It does answer two things: the game's **session check** (right after it starts, and then every four
+  Nothing is sent over the internet. It does answer four things: the game's **session check** (right after it starts, and then every four
   minutes, the game asks the server whether its session is still good, and it stops with "Session Terminated – Please log out and try again"
-  when three checks in a row go unanswered, that is, about eight minutes after it started; the stand-in says "yes, still good"), and,
-  when you have given a nickname, the question "who is the player" (the answer is the nickname, as the player's first name).
+  when three checks in a row go unanswered, that is, about eight minutes after it started; the stand-in says "yes, still good"),
+  when you have given a nickname, the question "who is the player" (the answer is the nickname, as the player's first name), the **password** of the
+  Parents' Corner (always "yes") and the question "where did this player get to" (the answer is the episode the game itself reported when it was last left).
 
 ## What is in this folder
 
@@ -222,13 +245,27 @@ saved in the browser, and the nickname, stay as they are.
   four-minute rhythm was run through once, on 2.0.3, for just over nine minutes of game time: the game made its three checks (right after it started and
   after four and eight minutes; the third is where it used to stop), the count stayed at zero and the game kept running. The screens that show the name
   were not all looked at.
+* **What the game remembers, Parents' Corner and Preferences.** Tried in Chromium with the real page and the real **2.0.3** game from start to end: a saved game was put
+  into the browser; the game asked where the player had got to and was told (episode 2); *Exit* → *Preferences* → any password → *Discovery Mode* → *Save Changes* was done
+  (the game wrote it into its `config.ini`, and the page kept that file with the garden's plant and its own lesson plan in it); the game was left through *Parents' Corner
+  (Exit)*; a second start brought it all back (the episode told again, Discovery Mode chosen in Preferences); **Clear saved data** took it away. **2.0.0:** the same steps in
+  the test program (not in the browser): the game came up at its second episode, Preferences opened with any password and *Save Changes* worked. **2.0.6:** in the
+  browser as far as the password and the Preferences window (any password is accepted, "PLAYER'S Preferences" opens), and the game's start and leave were seen in the test
+  program to ask and tell the stand-in server the episode; whether 2.0.6 then comes up at the right character on the next start was not looked at. **Not tried:** other browsers;
+  leaving the game with the parental lock on (the password is asked on the way out); what the print limits do; the garden's plant growing from visit to visit (only that its
+  counts are kept in `config.ini`). Not restored at all: each player's skill levels per game, favourites and the reports for parents (Disney's server kept them).
 * **Sing-Along videos.** The room's side was worked out from the game's own code (2.0.0 and 2.0.3 have the same code for the room, with the same server
   addresses and file names) and tried in the real game with stand-in videos (2.0.3: 5, 9, 16 and 36 buttons, 2.0.0: 16): the game accepted the list and the pictures of the
   buttons, drew them on the TV's screen (the grids fill the screen exactly), lit up the button under the mouse, showed its own
   "Check Back Soon" button where a picture was missing, started its video window when a button was clicked (with the right video), kept asking
   whether the video was over until it was told so, closed the window then and showed its buttons again. The page's side (the list from `videos/`,
-  the pictures made from a frame of each video, the player on the TV's screen, the end of a video, a video the browser cannot play, adding by the
-  button and by dropping, the sound of the empty room) was tried in headless Chromium with WebM clips. **Not tried:** MP4 (H.264) playback (that
+  the pictures made from a frame of each video, the player on the TV's screen with its controls, the game's mouse arrow drawn over the video (in the
+  right place wherever the mouse is, also in full screen, and out of the way when it is not near the TV), the end of a video, a video the browser
+  cannot play, adding by the button and by dropping, the sound of the empty room) was tried in headless Chromium with WebM clips. The arrow's
+  place was measured in the real game's pictures (2.0.0, 2.0.3 and 2.0.6: the game puts the arrow's picture level with the mouse and 2 pixels
+  above it, which is what the page does), the page was seen to read the arrow's picture from the real game's own files with the real game
+  running in it (all three versions), and a real game picture was put together with the page's arrow to see that the two meet at the TV's
+  edge. **Not tried:** MP4 (H.264) playback (that
   Chromium has no H.264 decoder; Chrome, Edge and Opera have one), Firefox and Safari, videos of real size and length, and getting to the room by
   clicking the TV in the Backyard with the mouse (in the tests the game was told to open the room itself). The game opens its window for a video
   at the top left of its screen and never moves it, so the page puts the video where the TV's black screen is (161, 78, 480 × 360 in the game's
@@ -308,7 +345,13 @@ saved in the browser, and the nickname, stay as they are.
 * Only Chromium (Chrome / Edge) was tried. The page uses only standard web features (Web Workers, OffscreenCanvas,
   AudioWorklet, IndexedDB) that current Firefox and Safari (16.4 or newer) also provide; if something misbehaves there, try
   Chrome or Edge first.
-* The 2.0.6 "Post Card" theme shows an empty picture with the files tested here (its image files were not in the zips supplied).
+* **The 2.0.6 "Today is" display (the postcard).** After Mickey's hello video the game shows a postcard: its "Today is" display, which in the original carries the
+  day's drawing and a voice that says the day. The game's own table of days (`Theme\DayTable.lua`) takes only the days for which both the drawing and the voice are
+  there. The files tested here hold 20 of its 167 drawings and none of the voices, so the table comes out empty: the postcard stays blank for about two seconds and the
+  lesson's first activity follows. That is the game's own code working with the files it was given, not something the player does (watched in the real page, with
+  the real game: hello video, blank postcard, lesson). Voices alone would not be enough: in a test in which silent voices were invented for the 20 drawings, the game went on to
+  ask for a background picture for this scene, `Theme\Bg_TodayIs.tga`, which is in none of the packs either, and stopped with its "Technical Error" screen. So for a day's
+  drawing to appear, its voice, its drawing and that background picture would all have to be among the files.
 
 ## Troubleshooting
 
@@ -324,6 +367,7 @@ saved in the browser, and the nickname, stay as they are.
 | A movie part is skipped | see "Flash movies" above: Ruffle must be in `ruffle/` |
 | The Sing-Along room (the TV in the Backyard) has no videos | put video files in `videos/` and reload with Ctrl+F5; the start card says how many the page found; see section 5. With none, the room only plays a spoken clip |
 | A button in the Sing-Along room says "Check Back Soon" | the game did not get a picture for that button (it uses its own plain one); the video still plays when it is clicked. Copy the log (`?debug`) if it happens for every button |
+| Over a Sing-Along video the arrow is the browser's plain one, not the game's orange one | the page could not read the game's arrow picture (`Common/arrow.tga`); open the page with `?debug`, play a video and press **Copy log**: the "Sing-Along room" section says why |
 | "This browser cannot play …" on the TV | the file's video or sound is of a kind the browser does not know; convert it to MP4 (H.264 + AAC), see section 5 |
 | A Flash screen stays white, or **Skip movie** / **Back** does nothing | open the page with `?debug`, reproduce it, press **Copy log**; the "Flash movies" section says what happened (see "Flash movies"); a white movie may also draw correctly with `?flashrenderer=canvas` |
 | A voice (for example the "Today is ..." line) is cut off or has a gap | open the page with `?debug`, play to that point and press **Copy log**; the "sound" section says what happened to that voice: `voice ends: ... (X s of Y s)` with X below Y means that the game ended it early (a line `voice stopped by the game` is there too) or that the file is shorter than it should be (a `NOTE:` line); `the game was busy for N ms` lines mean that the computer was held up while it played (the voice waits and goes on, it is not cut). Keep that section for a report |

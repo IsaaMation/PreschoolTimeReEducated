@@ -198,7 +198,7 @@ const idbGet = (db, k) => new Promise((res, rej) => { const q = db.transaction(S
 const idbPut = (db, k, v) => new Promise((res, rej) => { const t = db.transaction(SAVE_STORE, 'readwrite'); t.objectStore(SAVE_STORE).put(v, k); t.oncomplete = () => res(); t.onerror = () => rej(t.error); });
 
 let saveDb = null, saveDirty = false, saveSig = '', saveKey = 'state', bootReg = new Map();
-const isBootFile = path => /\\(disneypo|config)\.ini$/.test(path);       // written fresh at every start from the choices on the page
+const isBootFile = path => /\\disneypo\.ini$/.test(path);       // written fresh at every start from the choices on the page (config.ini is kept: what the game wrote in it is the grown-up's Preferences and the garden's plant; only its [LessonPlan] part is renewed, see mergeConfig)
 // what the Sing-Along room downloads (its list and the pictures of its buttons) is made from the page's videos at every start: kept, an old list or picture would be found by the game next time and used instead of the new one
 const isTransient = path => /\\(ptovid_g\d+_\d+\.png|userdata\\movies\.ini)$/.test(path);
 function snapshot() {
@@ -390,6 +390,7 @@ async function boot(c) {
     m.net.server.state.nickname = typeof c.nickname === 'string' ? c.nickname : '';
     if (c.debug) log('[server] nickname: ' + (EMU.cleanNickname(m.net.server.state.nickname) ? 'set (' + EMU.cleanNickname(m.net.server.state.nickname).length + ' characters, not shown here)' : 'none (the game says "Player")'));
   }
+  if (m.net && m.net.server) m.net.server.onRemembered = () => { saveDirty = true; };       // (the stand-in server has noted where the player got to: it is saved with the other files)
   if (m.net && m.net.server) {                         // the Sing-Along room: the page's videos become its list; the page hears when the room opens (and with no videos, that it is empty)
     m.net.server.onVideoRoom = info => post('videoRoom', info);
     for (const v of pendingVideos.splice(0)) applyVideos(v);
@@ -402,7 +403,15 @@ async function boot(c) {
   noteBootRegistry();
   await restoreSaved();
   watchSaves();
-  for (const f of EMU.Editions.bootFiles(vfs, lesson, lessons.length ? lessons : (lesson ? [lesson] : []))) m.putUserFile(m.installRoot + '\\' + f.path, f.bytes);
+  for (const f of EMU.Editions.bootFiles(vfs, lesson, lessons.length ? lessons : (lesson ? [lesson] : []))) {
+    const full = m.installRoot + '\\' + f.path;
+    let bytes = f.bytes;
+    if (/^config\.ini$/i.test(f.path)) {                // what the game left in it last time (Preferences, the garden) stays; the page's lesson plans are put in
+      const u = m.userFiles.get(m.fullPath(full).toLowerCase());
+      if (u) { try { bytes = EMU.Editions.mergeConfig(f.bytes, u.data.subarray(0, u.size)); if (c.debug) log('[save] config.ini: the game\'s own settings from last time are kept (' + bytes.length + ' bytes)'); } catch (e) { bytes = f.bytes; } }
+    }
+    m.putUserFile(full, bytes);
+  }
   m.yieldHook = () => { yielded = true; };
   m.cpu.nestedHook = nestedService;
   sliceThreads = !(c.debug && c.threads === 'coop');

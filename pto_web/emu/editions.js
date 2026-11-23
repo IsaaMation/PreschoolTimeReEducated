@@ -169,6 +169,26 @@
   }
   function latin1(s) { const b = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i) & 255; return b; }
 
+  /** config.ini as the game left it last time, with the part that belongs to the page renewed: the page says which lesson plans there are ([LessonPlan], in
+   * `fresh`), the game says everything else (what the grown-up chose in Preferences: guided or discovery mode, print limits, the parental lock, the sound
+   * levels; the garden's plant).  Both are text or bytes; the result is bytes.  What the page writes wins wherever both have a section of the same name. */
+  function mergeConfig(fresh, saved) {
+    const text = t => t == null ? '' : typeof t === 'string' ? t : new TextDecoder('latin1').decode(t);
+    const parse = t => {
+      const secs = []; let cur = null;
+      for (const raw of String(t).split(/\r?\n/)) {
+        const line = raw.trim(), h = /^\[([^\]\r\n]{1,40})\]$/.exec(line);
+        if (h) { cur = { name: h[1], lines: [] }; secs.push(cur); } else if (cur && line) cur.lines.push(line);
+      }
+      return secs;
+    };
+    const st = text(saved);
+    if (st.length > 8192) return typeof fresh === 'string' ? latin1(fresh) : fresh;        // (not a settings file of ours: left alone)
+    const out = parse(text(fresh)), have = new Set(out.map(x => x.name.toLowerCase()));
+    for (const x of parse(st)) if (!have.has(x.name.toLowerCase())) { have.add(x.name.toLowerCase()); out.push(x); }
+    return latin1(out.map(x => '[' + x.name + ']\r\n' + x.lines.join('\r\n') + '\r\n').join('\r\n'));
+  }
+
   /** plain data for a page */
   function describe(found) {
     return {
@@ -181,6 +201,6 @@
     };
   }
 
-  EMU.Editions = { scan, mount, bootFiles, describe, versionOf, lessonOf, seriesVersion, mb };
+  EMU.Editions = { scan, mount, bootFiles, mergeConfig, describe, versionOf, lessonOf, seriesVersion, mb };
   if (typeof module !== 'undefined' && module.exports) module.exports = EMU.Editions;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

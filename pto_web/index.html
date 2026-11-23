@@ -110,6 +110,20 @@
   #flashLayer .videoBox video { display: block; width: 100%; height: 100%; object-fit: contain; background: #000; outline: none; }
   #flashLayer .videoMsg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 14px; text-align: center; color: #fff; background: rgba(0, 0, 0, .85); font-size: clamp(.7rem, 1.9vw, 1rem); line-height: 1.4; }
   #flashLayer .videoMsg[hidden] { display: none; }
+  /* the player's own controls, and the game's mouse arrow drawn over the video (once its picture is there, the browser's arrow is hidden over the player) */
+  #flashLayer .videoBox.hascur, #flashLayer .videoBox.hascur * { cursor: none; }
+  #flashLayer .videoCursor { position: absolute; left: 0; top: 0; width: auto; height: auto; z-index: 6; pointer-events: none; background: none; }       /* (the page's rule for the game's canvas, black and as big as its box, is not for this one) */
+  #flashLayer .videoCursor[hidden] { display: none; }
+  #flashLayer .videoBar { position: absolute; left: 0; right: 0; bottom: 0; z-index: 4; display: flex; align-items: center; gap: 8px; padding: 22px 10px 8px; color: #fff; background: linear-gradient(to top, rgba(0, 0, 0, .8), rgba(0, 0, 0, 0)); transition: opacity .25s; user-select: none; -webkit-user-select: none; touch-action: none; }
+  #flashLayer .videoBox.idle .videoBar { opacity: 0; pointer-events: none; }
+  #flashLayer .videoBar button { all: unset; box-sizing: border-box; flex: none; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; color: #fff; }
+  #flashLayer .videoBar button:hover { background: rgba(255, 255, 255, .2); }
+  #flashLayer .videoBar svg { display: block; width: 20px; height: 20px; fill: currentColor; }
+  #flashLayer .vbSeek { position: relative; flex: 1; min-width: 40px; height: 22px; touch-action: none; }
+  #flashLayer .vbSeek::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 6px; margin-top: -3px; border-radius: 3px; background: rgba(255, 255, 255, .3); }
+  #flashLayer .vbFill { position: absolute; left: 0; top: 50%; width: 0; height: 6px; margin-top: -3px; border-radius: 3px; background: #f9a825; }
+  #flashLayer .vbKnob { position: absolute; left: 0; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 2px #f9a825; }
+  #flashLayer .vbTime { flex: none; font: 12px/1 system-ui, "Segoe UI", Roboto, sans-serif; font-variant-numeric: tabular-nums; opacity: .92; }
   #notice { position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 3; width: fit-content; max-width: calc(100% - 20px); padding: 7px 12px; border-radius: 8px; background: rgba(11, 23, 48, .92); border: 1px solid var(--edge); font-size: .85rem; color: var(--fg); pointer-events: none; }
   #kb { position: fixed; left: 0; bottom: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; margin: 0; font-size: 16px; pointer-events: none; }
 </style>
