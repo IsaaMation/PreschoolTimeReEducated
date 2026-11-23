@@ -18,7 +18,7 @@
 importScripts('emu/smk.js');
 for (const f of ['x86dec', 'cpu', 'jit_core', 'jit_alu', 'jit_misc', 'pe', 'vfs', 'machine', 'kernel32a', 'kernel32b',
   'inflate', 'archives', 'editions', 'audiodec', 'mp3tab', 'mp3', 'advapi32', 'user32', 'gdi32', 'ddraw', 'dsound', 'kernel32c', 'user32b', 'gdi32b', 'misc',
-  'mss32', 'bink_tables', 'bink', 'binkw32', 'smack', 'swfinfo', 'flashctl', 'wininet', 'ws2_32', 'server', 'hle', 'stallrec']) importScripts('emu/' + f + '.js');
+  'mss32', 'bink_tables', 'bink', 'binkw32', 'smack', 'swfinfo', 'videolist', 'flashctl', 'wininet', 'ws2_32', 'server', 'hle', 'stallrec']) importScripts('emu/' + f + '.js');
 
 const post = (type, data, transfer) => { const o = data || {}; o.type = type; self.postMessage(o, transfer || []); };
 const epoch = () => performance.timeOrigin + performance.now();       // wall-clock milliseconds, comparable with the page's clock
@@ -199,9 +199,11 @@ const idbPut = (db, k, v) => new Promise((res, rej) => { const t = db.transactio
 
 let saveDb = null, saveDirty = false, saveSig = '', saveKey = 'state', bootReg = new Map();
 const isBootFile = path => /\\(disneypo|config)\.ini$/.test(path);       // written fresh at every start from the choices on the page
+// what the Sing-Along room downloads (its list and the pictures of its buttons) is made from the page's videos at every start: kept, an old list or picture would be found by the game next time and used instead of the new one
+const isTransient = path => /\\(ptovid_g\d+_\d+\.png|userdata\\movies\.ini)$/.test(path);
 function snapshot() {
   const files = [];
-  for (const [path, u] of m.userFiles) if (!isBootFile(path)) files.push([path, u.data.slice(0, u.size)]);
+  for (const [path, u] of m.userFiles) if (!isBootFile(path) && !isTransient(path)) files.push([path, u.data.slice(0, u.size)]);
   const reg = [];
   for (const [path, k] of m.registry) {
     const vals = [], b = bootReg.get(path);
@@ -231,7 +233,7 @@ async function restoreSaved() {
   try { saveDb = await idb(); } catch (e) { saveDb = null; return; }
   let s = null; try { s = await idbGet(saveDb, saveKey); } catch (e) { return; }
   if (!s) return;
-  for (const [path, data] of s.files || []) if (!isBootFile(path)) m.userFiles.set(path, { data: new Uint8Array(data), size: data.length });
+  for (const [path, data] of s.files || []) if (!isBootFile(path) && !isTransient(path)) m.userFiles.set(path, { data: new Uint8Array(data), size: data.length });
   for (const [path, vals] of s.reg || []) { const k = m.registry.get(path) || new Map(); for (const [low, name, type, data] of vals) k.set(low, { name, type, data: new Uint8Array(data) }); m.registry.set(path, k); }
   saveSig = signature(snapshot());
   log('[save] restored ' + (s.files || []).length + ' file(s) and ' + (s.reg || []).length + ' registry key(s) from this browser');
@@ -388,6 +390,10 @@ async function boot(c) {
     m.net.server.state.nickname = typeof c.nickname === 'string' ? c.nickname : '';
     if (c.debug) log('[server] nickname: ' + (EMU.cleanNickname(m.net.server.state.nickname) ? 'set (' + EMU.cleanNickname(m.net.server.state.nickname).length + ' characters, not shown here)' : 'none (the game says "Player")'));
   }
+  if (m.net && m.net.server) {                         // the Sing-Along room: the page's videos become its list; the page hears when the room opens (and with no videos, that it is empty)
+    m.net.server.onVideoRoom = info => post('videoRoom', info);
+    for (const v of pendingVideos.splice(0)) applyVideos(v);
+  }
   if (m.flash) {                                       // Flash movies: with Ruffle on the page the movie is shown there and the movie's clock waits for it; without, movies are run through quickly
     const ruffle = c.flash === 'ruffle';
     m.flash.mode = ruffle ? 'timed' : 'skip'; m.flash.wantBytes = ruffle; m.flash.hostWait = ruffle;
@@ -437,6 +443,17 @@ async function boot(c) {
 
 const userFail = e => post('error', { message: e && e.message || String(e), user: e instanceof UserError, detail: e && e.stack || '' });
 
+/* ------------------------------------------------------------------------------------------------ the Sing-Along room's videos */
+const pendingVideos = [];                              // lists that came before the game was ready
+/** d: { gen, count, thumbs: [PNG bytes | null, ...] } = a new list;  { gen, thumb: i, bytes } = a better picture for one button of it */
+function applyVideos(d) {
+  const S = m && m.net && m.net.server;
+  if (!S || !S.setVideos) { pendingVideos.push(d); return; }
+  if (d.thumb !== undefined) { if (d.gen <= S.videos.gen) S.setThumb(d.gen, d.thumb, new Uint8Array(d.bytes)); }
+  else S.setVideos(d.gen, d.count, (d.thumbs || []).map(b => b ? new Uint8Array(b) : null));
+  if (cfg && cfg.debug) log('[server] videos for the Sing-Along room: ' + (d.thumb !== undefined ? 'a better picture for button ' + d.thumb + ' of list ' + d.gen : 'list ' + d.gen + ' with ' + d.count));
+}
+
 /* ------------------------------------------------------------------------------------------------ messages from the page */
 self.onmessage = ev => {
   const d = ev.data;
@@ -465,6 +482,8 @@ self.onmessage = ev => {
       break;
     case 'flush': saveNow(); break;
     case 'flashStarted': if (m && m.flash) { m.flash.started(d.id); if (blocked) requestRun(0); } break;                // the page's picture of the movie has begun
+    case 'videos': applyVideos(d); break;                                                                                // the page's videos for the Sing-Along room (a list, or a better picture for one button)
+    case 'videoEnded': if (m && m.flash) { m.flash.videoEnded(d.id); if (blocked) requestRun(0); } break;                // the page's video has played to its end (or could not be played)
     case 'flashSkip': case 'flashFailed': if (m && m.flash) { m.flash.skip(d.id); if (blocked) requestRun(0); } break;  // the player skipped it / it could not be shown
     case 'debugPutFile': if (cfg && cfg.debug && m) m.putUserFile(m.installRoot + '\\' + String(d.path).replace(/\//g, '\\'), new Uint8Array(d.bytes)); break;      // (tests) a file in the game's folder
     case 'debugFlashApp':                             // (tests) the game runs one of its Flash applications on a file (2.0.3)

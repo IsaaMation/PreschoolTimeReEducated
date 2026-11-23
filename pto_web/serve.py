@@ -2,7 +2,7 @@
 """Small static web server for trying the player on your own computer.
 
 Python's built-in `http.server` cannot answer HTTP Range requests, which the player needs to read the big installer (.exe) and
-.zip files in pieces, in place. This one can. Put the game's files in the `game/` folder next to index.html, together with a
+.zip files in pieces, in place (and a video player needs them to jump about in a video). This one can. Put the game's files in the `game/` folder next to index.html, together with a
 `files.json` that lists their names (see README.md), or use the "Use my own files" button on the page.
 
     python3 serve.py            # then open http://localhost:8000/
@@ -21,11 +21,15 @@ import socketserver
 import sys
 
 
+VIDEO_EXT = ('.mp4', '.m4v', '.webm', '.ogv', '.mov', '.mkv')
+
+
 class Handler(http.server.SimpleHTTPRequestHandler):
     extensions_map = dict(http.server.SimpleHTTPRequestHandler.extensions_map)
     extensions_map.update({'.js': 'text/javascript', '.mjs': 'text/javascript', '.json': 'application/json', '': 'application/octet-stream',
                            '.zip': 'application/zip', '.exe': 'application/octet-stream', '.ini': 'text/plain', '.txt': 'text/plain',
-                           '.html': 'text/html', '.wasm': 'application/wasm'})
+                           '.html': 'text/html', '.wasm': 'application/wasm', '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.webm': 'video/webm',
+                           '.ogv': 'video/ogg', '.mov': 'video/quicktime', '.mkv': 'video/x-matroska', '.mp3': 'audio/mpeg'})
     verbose = False
     _remaining = None
 
@@ -58,9 +62,32 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         return io.BytesIO(body)
 
+    def auto_video_list(self):
+        """The folder with the Sing-Along room's videos (videos/) without a videos.json: answer with the list of the video files in it."""
+        url = self.path.split('?', 1)[0]
+        if not url.endswith('/videos.json'):
+            return None
+        path = self.translate_path(url)
+        folder = os.path.dirname(path)
+        if os.path.isfile(path) or not os.path.isdir(folder):
+            return None
+        found = []
+        for n in os.listdir(folder):
+            full = os.path.join(folder, n)
+            if n.lower().endswith(VIDEO_EXT) and os.path.isfile(full):
+                found.append({'file': n, 'size': os.path.getsize(full)})
+        found.sort(key=lambda e: e['file'].lower())
+        body = (json.dumps(found, indent=1) + '\n').encode('utf-8')
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-cache')
+        self.end_headers()
+        return io.BytesIO(body)
+
     def send_head(self):
         self._remaining = None
-        auto = self.auto_file_list()
+        auto = self.auto_file_list() or self.auto_video_list()
         if auto is not None:
             return auto
         rng = self.headers.get('Range')
@@ -132,6 +159,10 @@ def main():
         found = sorted(n for n in os.listdir(game) if n.lower().endswith(('.zip', '.exe')))
         listed = os.path.isfile(os.path.join(game, 'files.json'))
         print('game/ holds %d .zip / .exe file(s)%s' % (len(found), ' (files.json lists the ones to use)' if listed else ' (no files.json: all of them are used)'))
+    videos = os.path.join(os.getcwd(), 'videos')
+    if os.path.isdir(videos):
+        n = len([f for f in os.listdir(videos) if f.lower().endswith(VIDEO_EXT)])
+        print('videos/ holds %d video file(s) for the Sing-Along room (the TV in the Backyard)' % n)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

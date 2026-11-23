@@ -17,6 +17,11 @@
  * Movies started through the DLL's calls (FPC_LoadMovieA: the interactive applications such as 2.0.6's) are not run by their length:
  * nothing can show them yet, so they are run through quickly like skipped movies, and the 'load' event says `interactive`.
  *
+ * One of those calls is the Sing-Along room's (2.0.0, 2.0.3): it loads stub.swf with FlashVars that name a video ("streamloc=v1_03"; see
+ * videolist.js), which the original movie played from a streaming server that no longer exists.  Such a window is a *video*: the 'load' event says
+ * which (`video`), the page plays it with the browser's player, and the room's loop, which asks the movie's variable "finished" about every 50 ms,
+ * is told the video is over when the page calls `flash.videoEnded(id)` (or the player pressed skip), and not before.
+ *
  * The movies that are put into the window with message 0x1402 (PUT_MOVIE_MEM) are the game's Flash *applications* (the day and night
  * menus, the read-along books): the game runs a loop of its own around them that never looks at the movie's frame.  That loop ends
  * when a flag in the game's object for the application is set, which the game's own Back button does (the button is drawn over the
@@ -29,6 +34,7 @@
  *                                                  rect = { x, y, w, h, visible }: where the movie is on the game's screen
  *               flash.started(id)                  the picture has begun; the clock starts
  *               flash.skip(id)                     the player pressed skip: the movie is over
+ *               flash.videoEnded(id)               the page's video (see above) has played to its end
  *               flash.mode                         'timed' (default: play for the movie's real length), 'skip' (end after skipMs)
  *               flash.wantBytes                    true when the host needs the movie's bytes in the 'load' event
  *               flash.hostWait                     true when the clock must wait for started(id) (a picture is being prepared)
@@ -121,7 +127,7 @@
       return Math.max(0, Math.min(f, last));
     };
     const freeze = w => { w.base = curFrame(w); w.playing = false; w.clockOn = false; };
-    const isFinished = w => w.loaded && (w.skipped || (w.playing && curFrame(w) >= nFrames(w) - 1));
+    const isFinished = w => w.loaded && (w.skipped || (w.video ? w.videoDone : (w.playing && curFrame(w) >= nFrames(w) - 1)));      // (a video is over when the page says so, not by the movie's own length)
 
     // ---- loading
     const setInfo = (w, bytes) => { w.info = (EMU.swfInfo && bytes && bytes.length >= 12) ? EMU.swfInfo(bytes) : null; };
@@ -129,7 +135,7 @@
       w.loaded = true; w.skipped = false; w.base = 0; w.playing = true; w.clockOn = false; w.shown = true;
       const i = w.info;
       log(why + ' "' + w.name + '" ' + (i ? 'flash ' + i.version + ', ' + i.width + 'x' + i.height + ', ' + i.frames + ' frames at ' + i.fps + ' fps (' + (i.frames / i.fps).toFixed(1) + ' s)' : 'header not readable'));
-      emit('load', w, { name: w.name, info: i, bytes: w.data, vars: w.vars, interactive: !!w.interactive, modal: !!w.modal, src: w.src || '' });
+      emit('load', w, { name: w.name, info: i, bytes: w.data, vars: w.vars, interactive: !!w.interactive, modal: !!w.modal, src: w.src || '', video: w.video || '' });
       if (flash.onLoad) flash.onLoad(w);
     };
     const fromMemory = (w, ptr, size) => {
@@ -143,6 +149,7 @@
     };
     const fromFile = (w, path) => {
       w.kind = 'file'; w.name = path; w.src = (m.vfsKey && m.vfsKey(m.fullPath(path))) || ''; w.interactive = true;       // started through the DLL's calls: the game's interactive Flash applications, which end by themselves (not by their length)
+      w.video = (EMU.Videos && /(^|[\\/])stub\.swf$/i.test(path) && EMU.Videos.videoOfVars(w.vars)) || ''; w.videoDone = false;      // the Sing-Along room's player: see above
       let f = null; try { f = m.openRead(path); } catch (e) { }
       if (!f) { log('movie file not found: ' + path); w.info = null; w.data = null; loaded(w, 'movie file (missing)'); return; }
       w.data = flash.wantBytes && !w.interactive ? new Uint8Array(f.read(0, f.size)) : null;           // (a copy: the page takes the buffer over; nothing shows interactive ones yet)
@@ -244,6 +251,11 @@
 
     // ---- what the page can tell us
     flash.started = id => { const w = flash.windows.get(id); if (w && w.playing && !w.clockOn) startClock(w); };
+    flash.videoEnded = id => {
+      const w = flash.windows.get(id); if (!w || !w.video) return false;
+      w.videoDone = true; log('video ' + w.video + ' ended');
+      return true;
+    };
     flash.skip = id => {
       const w = flash.windows.get(id); if (!w) return false;
       w.skipped = true; w.playing = true;                            // a movie the game watches by its frame: it is on its last frame

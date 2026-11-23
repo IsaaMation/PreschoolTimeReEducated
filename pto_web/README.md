@@ -107,6 +107,45 @@ ended up with.
 The interactive Flash applications that 2.0.6 starts through the control's own calls (they talk to the game while they run, and the game
 asks them for a result) are not connected yet. They are skipped in both cases, and the page says so.
 
+## 5. Videos for the Sing-Along room (optional)
+
+The Sing-Along room (the TV in the Backyard; the game calls the room "Video") used to load its videos from Disney's servers, which are gone, so
+in the original game it is empty. The player can give it videos of your own:
+
+1. Put video files in the `videos/` folder next to `index.html`: `.mp4` (H.264 video with AAC sound plays in every browser) or `.webm`.
+   `.m4v`, `.ogv`, `.mov` and `.mkv` are tried as well and play if your browser knows what is inside them.
+2. Reload the page (Ctrl+F5). `serve.py` lists the folder for the page by itself (the window that runs it says how many videos it found).
+   A web server that cannot list a folder needs a file `videos/videos.json` instead: `["01 - Hot Potato.mp4", "02 - The Wheels on the Bus.mp4"]`,
+   or `[{"file": "hot-potato.mp4", "title": "Hot Potato"}]` to choose the name that is shown on the button.
+3. Start the game and click the TV in the Backyard. Every video is a button on the TV's screen, with a frame of the video as its picture and its
+   name on it; the button lights up under the mouse. A click plays that video on the TV's screen with the browser's own video player (its own
+   play / pause, volume and seek controls). When the video ends, the game goes on, as it did when its Flash player had played the video to the
+   end. The game's red **X** under the TV stops it.
+
+More about it:
+
+* **Order and names.** The buttons are in the order of the file names, numbers by their value ("2 …" before "10 …"). A number and a dash at the
+  start of a file name ("01 - ") only puts the video in its place and is not shown. The more videos, the smaller the buttons: up to 4 videos
+  give buttons of 240 × 180 (in the game's 800 × 600 picture), up to 9 give 160 × 120, up to 16 give 120 × 90, up to 25 give 96 × 72 and up to
+  36 give 80 × 60. No more than **36** videos fit on the TV; the rest are left out, and the start card says how many.
+* **Videos…** on the page, or dropping video files on the page, adds videos from anywhere on your computer. They are not copied: the browser
+  reads them in place, and they stay only until the page is closed. They show up the next time the room is opened.
+* **A video that the browser cannot play** (an MP4 with another kind of video than H.264, an old Flash `.flv`, …) shows a message on the TV, and
+  after a few seconds the game is told that the video is over, so that the room does not get stuck. Such a file can be converted:
+  `ffmpeg -i in.flv -c:v libx264 -c:a aac out.mp4`.
+* **No videos.** When the room opens with an empty list, one of four spoken clips (`sounds/NOVIDEOS1.mp3` … `NOVIDEOS4.mp3`) is played, picked
+  at random but never the same one twice in a row. Clips named `NOVIDEOS5.mp3` … `NOVIDEOS8.mp3` that you put in `sounds/` are used as well.
+  The **Sound** button mutes it.
+* **How it works.** The room asks a Disney server for a list of its videos and for a picture of each button, and plays a clicked video with a
+  small Flash movie (`stub.swf`) that streamed it from that server. The player's stand-in for the server answers those two requests from your
+  videos (the button pictures are made by the page: a plain card with the name at first, then a frame of the video), and the page shows the
+  video instead of the Flash movie. Nothing is sent over the internet.
+* **If the room is empty or a video does not play:** open the page with `?debug`, open the room, press **Copy log**; its section
+  "Sing-Along room" says how many videos the page found (and where), what the game was given, what it asked for, which video was played and
+  how it ended.
+* **Hosting:** upload `videos/` and `sounds/` with the rest. The videos need a server that answers Range requests (they are needed to play
+  and to skip about in a video); the file types must be sent with their video types (`video/mp4`, `video/webm`).
+
 ## Using it
 
 * Mouse or touch works as in the original. The game uses just two keys: **Esc** skips the intro ("Press Escape to Skip"; while a Flash
@@ -151,6 +190,7 @@ asks them for a result) are not connected yet. They are skipped in both cases, a
 ```
 index.html, main.js     the page: screen, mouse/keyboard, sound start button, version, lesson and nickname choice, Flash layer, print view
 worker.js               runs the emulator in a Web Worker, reads the game files with Range requests, saves players
+videos.js               the Sing-Along room's videos on the page's side: the list, the button pictures, the player on the TV, the sound of the empty room
 audio-worklet.js        plays the game's sound through Web Audio (short fixed queue that never throws a voice away, measures how late the sound is)
 emu/*.js                the emulator: x86 compiler (to JavaScript), Windows / Miles / Bink / Smacker / MP3 / network / printer / Flash-control
                         stand-ins, server.js (the stand-in for Disney's server), the readers for zips and Wise installers, and hle.js
@@ -158,10 +198,12 @@ emu/*.js                the emulator: x86 compiler (to JavaScript), Windows / Mi
 serve.py                local test server with Range support
 game/                   your installers and zips go here (and files.json)
 ruffle/                 optional: Ruffle's self-hosted web build
+videos/                 optional: your videos for the Sing-Along room (section 5)
+sounds/                 the four spoken clips the Sing-Along room plays when it has no videos
 LICENSES.txt            licences and credits for the parts this player is built from
 ```
 
-To update the player, unpack the new files over the old ones: `game/` and `ruffle/` hold your own files and are not part of the update.
+To update the player, unpack the new files over the old ones: `game/`, `ruffle/` and `videos/` hold your own files and are not part of the update.
 Then reload the page with Ctrl+F5 (or Shift+Reload) so that the browser does not keep the old scripts. The players and settings that the game
 saved in the browser, and the nickname, stay as they are.
 
@@ -180,6 +222,17 @@ saved in the browser, and the nickname, stay as they are.
   four-minute rhythm was run through once, on 2.0.3, for just over nine minutes of game time: the game made its three checks (right after it started and
   after four and eight minutes; the third is where it used to stop), the count stayed at zero and the game kept running. The screens that show the name
   were not all looked at.
+* **Sing-Along videos.** The room's side was worked out from the game's own code (2.0.0 and 2.0.3 have the same code for the room, with the same server
+  addresses and file names) and tried in the real game with stand-in videos (2.0.3: 5, 9, 16 and 36 buttons, 2.0.0: 16): the game accepted the list and the pictures of the
+  buttons, drew them on the TV's screen (the grids fill the screen exactly), lit up the button under the mouse, showed its own
+  "Check Back Soon" button where a picture was missing, started its video window when a button was clicked (with the right video), kept asking
+  whether the video was over until it was told so, closed the window then and showed its buttons again. The page's side (the list from `videos/`,
+  the pictures made from a frame of each video, the player on the TV's screen, the end of a video, a video the browser cannot play, adding by the
+  button and by dropping, the sound of the empty room) was tried in headless Chromium with WebM clips. **Not tried:** MP4 (H.264) playback (that
+  Chromium has no H.264 decoder; Chrome, Edge and Opera have one), Firefox and Safari, videos of real size and length, and getting to the room by
+  clicking the TV in the Backyard with the mouse (in the tests the game was told to open the room itself). The game opens its window for a video
+  at the top left of its screen and never moves it, so the page puts the video where the TV's black screen is (161, 78, 480 × 360 in the game's
+  800 × 600 picture) instead. If a video does not appear where it should, `?debug` → **Copy log** shows what the page and the game did.
 * **Flash** is the part tested least. The game's side (how it starts a movie and decides it is over) was worked out from the game
   itself. With Ruffle 0.8.0 the twelve movies of 2.0.0 (Little Einsteins, Stanley) were played in the page with picture and sound,
   and the real game was played through its first two movies: Ruffle starts a movie within a fraction of a second, **Skip movie**
@@ -216,24 +269,30 @@ saved in the browser, and the nickname, stay as they are.
   be the cause of the stall in the Bear lesson's cabinet game (a stall report from that scene shows the thread that draws the game
   working the whole time and the other thread waiting; the causes were the two items above), but the change stays: it is how Windows
   behaves.
-* **Voices that were cut off (the "Today is ..." line).** When a scene starts, the game starts its voice and loads the scene's big pictures at
-  the same time ("Today is ..." loads two large ones). While the emulator was busy with that, the game's clock went on but its sound could not
-  be made, and the player then skipped the sound that had been missed: a long voice lost its middle while the game still ended it on time. In a
-  test, a hold-up of 1.2 s just after a voice of 10 s began took about 2.2 s out of it. Now a sound that the game plays through its sound
-  library goes on where it stopped: for the game a voice simply takes a little longer. The page's sound player does not throw a voice or a
-  sound effect away either (it keeps up to about 1.5 s of such sound waiting; if there is more, the oldest goes after all); music that repeats can
-  still be skipped over a hold-up. If the page itself was held up (the computer is busy with something else) a voice that arrives late is played whole and runs up to
-  1 % fast until it has caught up, which cannot be heard, so it can be a little behind the picture for a while. The sound of a video clip still
-  skips together with its pictures.
-  This was tried in Chromium with the real player and the real game (2.0.6), with a stand-in for the voice (a ten-second tone file with a click every
-  second and an end marker, in the place of the real "Today is ..." file, which was not available here): a hold-up of 1.2 s put in just after the voice
-  began made the earlier player lose 2.2 s of it, the present one played all of it, with a pause as long as the hold-up; a page held up for 0.6 s
-  cost the earlier player 0.56 s of it, the present one nothing. It was **not** tried with the real voice files of the Bear lesson, so a hold-up as the
-  cause of the cut is the best match to what the video shows, not something that was proved. If a voice is still cut, `?debug` now says what happened to it.
+* **Voices that were cut off (the "Today is ..." line).** Two different things could cut a voice short; the player now guards against both.
+  1. *A wrong number in the sound file itself.* This is what cut Bear's "Today is ..." voice (`Bear/P0100_BEA_TOD_01150.wav`). The header of the file
+     says that it holds 42,496 samples; its data holds 167,660 (7.6 s). The original game evidently does not go by that number, the earlier player
+     did, and so it stopped the voice after 1.9 s and the scene went on. (In the video of the cut the voice lasts about 1.9 s.) Now a number in the header that is more than one block away from what the data holds is not believed, all of the data is played, and
+     `?debug` says so with a `NOTE:` line (see below). The first log of a real run with v1.8 showed it: `voice ends: ... (7.6 s of 7.6 s)`.
+  2. *The player being held up while a voice plays.* When a scene starts, the game starts its voice and loads the scene's big pictures at the same
+     time. If the emulator is held up then (a garbage collection, a busy computer, a long piece of work), the game's clock goes on but its sound
+     cannot be made, and the earlier player skipped the sound that had been missed: a long voice lost its middle while the game still ended it on
+     time. In a test, a hold-up of 1.2 s just after a voice of 10 s began took about 2.2 s out of it. This is **not** what cut the Bear voice (the
+     log of the real run shows no hold-up while it played), but it can do the same to any long voice. Now a sound that the game plays through its
+     sound library goes on where it stopped: for the game a voice simply takes a little longer. The page's sound player does not throw a voice or a
+     sound effect away either (it keeps up to about 1.5 s of such sound waiting; if there is more, the oldest goes after all); music that repeats can
+     still be skipped over a hold-up. If the page itself was held up (the computer is busy with something else) a voice that arrives late is
+     played whole and runs up to 1 % fast until it has caught up, which cannot be heard, so it can be a little behind the picture for a while. The
+     sound of a video clip still skips together with its pictures.
+     This was tried in Chromium with the real player and the real game (2.0.6), with a stand-in for the voice (a ten-second tone file with a click
+     every second and an end marker): a hold-up of 1.2 s put in just after the voice began made the earlier player lose 2.2 s of it, the present
+     one played all of it, with a pause as long as the hold-up; a page held up for 0.6 s cost the earlier player 0.56 s of it, the present one
+     nothing.
+  If a voice is still cut, `?debug` says what happened to it.
 * **Sound notes in the log (`?debug`).** For every voice of 1.5 s or more the log has lines starting with `[sound]`: `voice starts: <file> (<seconds> s)`,
   `voice ends: <file> (<heard> s of <total> s)`, `voice stopped by the game: ...` when the game itself ended it early, `the game was busy for <N> ms while
   "<file>" played: the sound waited and went on, nothing was skipped` (hold-ups of 150 ms and more), and `NOTE:` lines when a sound file is shorter than
-  its header says or its header counts the samples wrongly (the player then plays all of the data). **Copy log** has a section of its own for them
+  its header says ("is cut short") or its header counts the samples wrongly ("says that it holds N samples, but its data holds M": the player then plays all of the data). **Copy log** has a section of its own for them
   (the end of the log used to push them out), and the line of figures at the top shows how long the sound fell behind the game in all.
 * **Stall recorder (`?debug`).** When the game goes on for 0.4 s or more without coming back to its message loop (no "game tick"), the page
   gets no new pictures from it. In `?debug` the player then notes what the game is doing: which blocks of its code run most often (counted on one slice of work in three, so as to slow the game down less), what
@@ -263,6 +322,9 @@ saved in the browser, and the nickname, stay as they are.
 | "Session Terminated – Please log out and try again" about eight minutes after the game started | older files of this player did not answer the game's session check; copy the new player files over the old ones (your `game/` and `ruffle/` folders stay as they are) and reload with Ctrl+F5 |
 | The nickname is not shown | it is given to the game when the game starts: set it on the start card before pressing **Start**; only some screens show a name (for example "Good Job, …!") |
 | A movie part is skipped | see "Flash movies" above: Ruffle must be in `ruffle/` |
+| The Sing-Along room (the TV in the Backyard) has no videos | put video files in `videos/` and reload with Ctrl+F5; the start card says how many the page found; see section 5. With none, the room only plays a spoken clip |
+| A button in the Sing-Along room says "Check Back Soon" | the game did not get a picture for that button (it uses its own plain one); the video still plays when it is clicked. Copy the log (`?debug`) if it happens for every button |
+| "This browser cannot play …" on the TV | the file's video or sound is of a kind the browser does not know; convert it to MP4 (H.264 + AAC), see section 5 |
 | A Flash screen stays white, or **Skip movie** / **Back** does nothing | open the page with `?debug`, reproduce it, press **Copy log**; the "Flash movies" section says what happened (see "Flash movies"); a white movie may also draw correctly with `?flashrenderer=canvas` |
 | A voice (for example the "Today is ..." line) is cut off or has a gap | open the page with `?debug`, play to that point and press **Copy log**; the "sound" section says what happened to that voice: `voice ends: ... (X s of Y s)` with X below Y means that the game ended it early (a line `voice stopped by the game` is there too) or that the file is shorter than it should be (a `NOTE:` line); `the game was busy for N ms` lines mean that the computer was held up while it played (the voice waits and goes on, it is not cut). Keep that section for a report |
 | No sound | check the **Sound** button and the system volume (browsers only allow sound after a click, which is what **Start** is for) |

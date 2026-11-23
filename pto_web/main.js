@@ -22,6 +22,8 @@
   const keepLines = [];                              // debug: the notes of the stall recorder and the like, kept even when the log scrolls on
   const soundLines = [];                             // debug: which voices played, how much of each was heard, and when the sound had to wait for the game (kept apart, so later lines do not push them out)
   const flashLines = [];                             // debug: what happened to each Flash movie, with the time (seconds since the page opened); part of "Copy log"
+  const videoLines = [];                             // what happened with the Sing-Along room's videos (kept whatever ?debug says; part of "Copy log")
+  const vnote = t => { videoLines.push((performance.now() / 1000).toFixed(1).padStart(7) + ' s  ' + t); if (videoLines.length > 200) videoLines.shift(); };
   const fnote = t => { if (!debug) return; flashLines.push((performance.now() / 1000).toFixed(1).padStart(7) + ' s  ' + t); if (flashLines.length > 300) flashLines.shift(); };
   let clipStats = [];
   const avA = [], avV = [];                           // debug: measured delay (ms) between the game producing a sound / picture and it being heard / seen
@@ -143,6 +145,7 @@
       case 'stats': if (debug) $('hud').textContent = 'game ticks ' + d.tps + '/s · frames ' + d.fps + '/s · cpu ' + d.busy + '% · requests ' + d.requests + ' (' + d.mb + ' MB) · guest memory ' + d.heap + ' MB · hold-ups ' + (d.held + d.waited) + ' ms/s' + (d.blits ? ' · native blits ' + d.blits + '/s (' + d.mpx + ' Mpx/s)' : '') + (d.skipped ? ' · left to the game ' + d.skipped + '/s' : '') + (d.sw ? ' · sound fell behind the game by ' + d.sw + ' ms in all' : '') + ' · picture delay ' + pictureDelay + ' ms' + (d.clips && d.clips.length ? ' · clip sound ' + d.clips.map(c => 'late ' + c.late + ' skipped ' + c.trimmed + ' ms').join(', ') : ''); if (d.clips) clipStats = d.clips; break;
       case 'print': showPrint(d); break;
       case 'flash': onFlash(d.ev); break;
+      case 'videoRoom': onVideoRoom(d); break;
       case 'flashFile': onFlashFile(d); break;
       case 'error': problem(d); break;
       case 'exit': over = true; showOverlay('The game has closed.', 'Play again'); break;
@@ -230,7 +233,7 @@
     switch (ev.op) {
       case 'load': {
         if (mv) closeMovie(mv);
-        movies.set(ev.id, mv = { id: ev.id, name: movieFile(ev.name), src: ev.src || '', modal: !!ev.modal, bytes: ev.bytes || null, vars: ev.vars || '', interactive: !!ev.interactive, rect: ev.rect || null, playing: false, visible: !ev.rect || ev.rect.visible !== false, api: null, el: null, started: false, timer: 0, t0: performance.now() });
+        movies.set(ev.id, mv = { id: ev.id, name: movieFile(ev.name), src: ev.src || '', modal: !!ev.modal, bytes: ev.bytes || null, vars: ev.vars || '', interactive: !!ev.interactive, video: ev.video || '', rect: ev.rect || null, playing: false, visible: !ev.rect || ev.rect.visible !== false, api: null, el: null, started: false, timer: 0, t0: performance.now() });
         rec(mv, 'load');
         const i = ev.info;
         fnote('movie ' + hex(ev.id) + ' "' + mv.name + '" arrives: ' + (ev.bytes ? ev.bytes.byteLength : 0) + ' bytes, '
@@ -249,6 +252,7 @@
   }
   function showMovie(mv) {
     if (!mv.playing || !mv.visible) return;
+    if (mv.video) { showVideo(mv); return; }          // the Sing-Along room's player: a video of its own, no Flash movie
     if (mv.interactive) {                              // an application that talks to the game: not connected yet, the worker runs it through quickly
       if (!noticed) { noticed = true; notice('This part of the game is an interactive Flash application, which this player cannot run yet, so it is skipped.'); }
       return;
@@ -286,6 +290,20 @@
       });
       if (r && r.catch) r.catch(e => { if (!settled) { settled = true; clearTimeout(mv.timer); failMovie(mv, e); } });
     } catch (e) { settled = true; clearTimeout(mv.timer); failMovie(mv, e); return; }
+  }
+  /** The Sing-Along room (the TV in the Backyard) started one of its videos: the browser's own player is put on the TV's screen (the game's window for it),
+   * and the game is told when the video is over, which is what its Flash player did when it had played the stream to its end. */
+  function showVideo(mv) {
+    if (mv.api) { mv.hidden = false; mv.el.style.display = ''; setPaused(mv, false); layoutMovie(mv); return; }       // already there: it was paused or hidden
+    const o = window.PTOVideos && PTOVideos.open(mv.video, { muted: () => muted, onEnd: why => { fnote('video ' + mv.video + ': ' + why + ' (the game is told)'); post({ type: 'videoEnded', id: mv.id }); } });
+    if (!o) { vnote('[videos] ' + mv.video + ' is not in the list any more'); notice('That video is not in the list any more.'); post({ type: 'videoEnded', id: mv.id }); return; }
+    mv.el = o.el; mv.api = o.api; mv.started = true; rec(mv, 'started');
+    flashLayer.appendChild(mv.el); layoutMovie(mv);
+  }
+  /** the room opened (a list of videos was asked for): with none in it, one of the NOVIDEOS sounds is played */
+  function onVideoRoom(d) {
+    vnote('[videos] the Sing-Along room opened with ' + d.count + ' video(s) (list ' + d.gen + ')');
+    if (!d.count && window.PTOVideos) setTimeout(() => { PTOVideos.noVideos().catch(() => { }); }, 1000);       // (the room has to fade in first)
   }
   /** Ruffle's own boxes (the hardware-acceleration warning, the save manager, the right-click menu, the play button) have no place over this game */
   function quietPlayer(el) {
@@ -340,20 +358,22 @@
   }
   /** puts the movie's picture where the game's window for it is (the whole screen for nearly all movies) */
   function layoutMovie(mv) {
-    const r = mv.rect, W = cvs.width, H = cvs.height;
+    // (the Sing-Along room opens its window for a video at 0,0 and never moves it; what it draws for it is the TV's screen: that is where the video goes)
+    const r = mv.video && window.EMU && EMU.Videos ? EMU.Videos.RECT : mv.rect, W = cvs.width, H = cvs.height;
     const whole = !r || r.w <= 0 || r.h <= 0 || (r.x <= 1 && r.y <= 1 && r.w >= W - 2 && r.h >= H - 2);
     mv.whole = whole;
     const st = mv.el.style;
     if (whole) { st.left = st.top = '0'; st.width = st.height = '100%'; }
     else {
       const a = stage.getBoundingClientRect(), c = cvs.getBoundingClientRect(), k = c.width / W;
-      st.left = (c.left - a.left + r.x * k) + 'px'; st.top = (c.top - a.top + r.y * k) + 'px'; st.width = (r.w * k) + 'px'; st.height = (r.h * k) + 'px';
+      st.left = (c.left - a.left - stage.clientLeft + r.x * k) + 'px'; st.top = (c.top - a.top - stage.clientTop + r.y * k) + 'px'; st.width = (r.w * k) + 'px'; st.height = (r.h * k) + 'px';      // (the stage's 1 px border is outside what it positions its children in)
     }
     flashChanged();
   }
   function hideMovie(mv) { setPaused(mv, true); if (mv.el) mv.el.style.display = 'none'; mv.hidden = true; flashChanged(); }
   function closeMovie(mv, keepRecord) {
     clearTimeout(mv.timer); clearTimeout(mv.skipTimer);
+    if (mv.api && mv.api.dispose) { try { mv.api.dispose(); } catch (e) { /* ignore */ } }     // (a video: stop it, let go of the file)
     if (mv.el) { try { mv.el.remove(); } catch (e) { /* ignore */ } }
     mv.el = mv.api = null; mv.started = false;
     if (!keepRecord) mv.bytes = null;
@@ -364,7 +384,8 @@
     let shown = 0, whole = false;
     for (const mv of movies.values()) if (mv.el && !mv.hidden) { shown++; if (mv.whole) whole = true; }
     const was = !flashLayer.classList.contains('hide');
-    flashLayer.classList.toggle('hide', !shown); flashSkip.classList.toggle('hide', !shown);
+    let plain = false; for (const mv of movies.values()) if (mv.el && !mv.hidden && !mv.video) plain = true;       // (a video has its own controls, and the game's red X under the TV)
+    flashLayer.classList.toggle('hide', !shown); flashSkip.classList.toggle('hide', !plain);
     let app = false; for (const mv of movies.values()) if (mv.el && !mv.hidden && mv.modal) app = true;
     flashSkip.textContent = app ? 'Back' : 'Skip movie';                                  // (an application ends like the game's own Back button does)
     flashLayer.style.background = whole ? '#000' : 'transparent'; flashLayer.style.pointerEvents = whole ? '' : 'none';
@@ -542,6 +563,31 @@
   $('start').onclick = start;
   newWorker();
   worker.postMessage({ type: 'scan', base, debug });
+  /* the Sing-Along room's videos (see videos.js): the folder videos/ is read now, long before the game could need the list */
+  if (window.PTOVideos) {
+    PTOVideos.init({ note: vnote, muted: () => muted, base: document.baseURI });
+    PTOVideos.attach((msg, transfer) => { if (worker) worker.postMessage(msg, transfer || []); });
+    PTOVideos.onChange(showVideoInfo);
+    PTOVideos.start();
+  }
+
+  /* the Sing-Along room's videos from this computer (the Videos button, or dropped on the page); the ones in the videos folder are there already */
+  function showVideoInfo(i) {
+    const b = $('videoBtn'); if (b) b.textContent = i.count ? 'Videos (' + i.count + ')…' : 'Videos…';
+    const n = $('videoNote'); if (!n) return;
+    n.textContent = 'Sing-Along videos (the TV in the Backyard): ' + (i.count ? i.count + ' found' + (i.folder ? ' in the videos folder' : '') + (i.added ? (i.folder ? ', ' : ' ') + i.added + ' added here' : '') + (i.over ? ' (' + i.over + ' more than fit on the TV are left out)' : '') + '.' : 'none yet. Put video files (.mp4 or .webm) in the videos folder next to this page, or add some below.');
+    n.classList.toggle('hide', i.folderState === 'idle' || i.folderState === 'loading');
+  }
+  function addVideos(list) {
+    if (!window.PTOVideos) return 0;
+    const files = [...list].filter(PTOVideos.isVideoFile);
+    if (!files.length) { notice('No video files there. The Sing-Along room plays .mp4 or .webm videos.'); return 0; }
+    const n = PTOVideos.addFiles(files);
+    notice(n ? 'Added ' + n + ' video' + (n === 1 ? '' : 's') + ' to the Sing-Along room. They show up the next time you open it (the TV in the Backyard).' : 'Those videos are in the Sing-Along room already.', 7000);
+    return n;
+  }
+  $('videoBtn').onclick = () => $('videoPick').click();
+  $('videoPick').onchange = e => { addVideos(e.target.files); e.target.value = ''; cvs.focus(); };
 
   /* files from this computer: chosen with the button or dropped on the page */
   function addLocal(list) {
@@ -553,10 +599,15 @@
   $('pick').onchange = e => { addLocal(e.target.files); e.target.value = ''; };
   let dragDepth = 0;
   const hasFiles = e => e.dataTransfer && [...(e.dataTransfer.types || [])].indexOf('Files') >= 0;
-  window.addEventListener('dragenter', e => { if (!hasFiles(e) || ready) return; dragDepth++; document.body.classList.add('dragging'); e.preventDefault(); });
+  window.addEventListener('dragenter', e => { if (!hasFiles(e)) return; dragDepth++; $('drop').textContent = ready ? 'Drop video files here to add them to the Sing-Along room' : 'Drop the installer (.exe) or zip files here, or video files for the Sing-Along room'; document.body.classList.add('dragging'); e.preventDefault(); });
   window.addEventListener('dragover', e => { if (hasFiles(e)) e.preventDefault(); });
   window.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove('dragging'); } });
-  window.addEventListener('drop', e => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth = 0; document.body.classList.remove('dragging'); addLocal(e.dataTransfer.files); });
+  window.addEventListener('drop', e => {
+    if (!hasFiles(e)) return; e.preventDefault(); dragDepth = 0; document.body.classList.remove('dragging');
+    const all = [...e.dataTransfer.files], vids = all.filter(f => window.PTOVideos && PTOVideos.isVideoFile(f) && !/\.(exe|zip)$/i.test(f.name));
+    if (vids.length) addVideos(vids);
+    addLocal(all.filter(f => vids.indexOf(f) < 0));
+  });
 
   /* ---------------------------------------------------------------------------------------- input */
   const send = ev => { if (worker && ready && !over && !printOpen()) worker.postMessage({ type: 'input', ev }); };
@@ -702,8 +753,8 @@
   /* ---------------------------------------------------------------------------------------- pause while hidden, save on leaving */
   document.addEventListener('visibilitychange', () => {
     if (!worker || !ready || over) return;
-    if (document.hidden) { releaseAll(); flashVisible(false); worker.postMessage({ type: 'pause' }); if (actx) actx.suspend(); }
-    else { flushSound(); flashVisible(true); worker.postMessage({ type: 'resume' }); if (actx && !muted) actx.resume(); }
+    if (document.hidden) { releaseAll(); flashVisible(false); if (window.PTOVideos) PTOVideos.pauseSound(true); worker.postMessage({ type: 'pause' }); if (actx) actx.suspend(); }
+    else { flushSound(); flashVisible(true); if (window.PTOVideos) PTOVideos.pauseSound(false); worker.postMessage({ type: 'resume' }); if (actx && !muted) actx.resume(); }
   });
   window.addEventListener('pagehide', () => { if (worker) worker.postMessage({ type: 'flush' }); });
 
@@ -726,7 +777,7 @@
   $('muteBtn').onclick = () => {
     muted = !muted;
     if (gain) gain.gain.value = muted ? 0 : 1;
-    flashVolume(!muted);
+    flashVolume(!muted); if (window.PTOVideos) PTOVideos.setMuted(muted);
     flushSound(); if (muted) soundOff();                 // (no sound: nothing to wait for)
     $('muteBtn').textContent = 'Sound: ' + (muted ? 'off' : 'on'); $('muteBtn').setAttribute('aria-pressed', muted ? 'true' : 'false');
     cvs.focus();
@@ -750,7 +801,7 @@
   /* ?debug: "Copy log" puts the statistics, the stall recorder's notes and the end of the log on the clipboard */
   $('copyLogBtn').onclick = async () => {
     const text = ['Playhouse Disney Preschool Time Online, player log', navigator.userAgent, location.search, $('hud').textContent, '',
-      '--- notes (stalls, drawing) ---', ...keepLines, '', '--- sound (voices of 1.5 s and longer: when they start and end, how much of them was heard, and any time the sound had to wait for the game) ---', ...(soundLines.length ? soundLines : ['(nothing yet)']), '', '--- Flash movies (seconds since the page opened, what happened) ---', ...flashLines, '', '--- end of the log ---', ...logLines.slice(-60).filter(l => !/^\[(stall|hle|sound)\]/.test(l))].join('\n');
+      '--- notes (stalls, drawing) ---', ...keepLines, '', '--- sound (voices of 1.5 s and longer: when they start and end, how much of them was heard, and any time the sound had to wait for the game) ---', ...(soundLines.length ? soundLines : ['(nothing yet)']), '', '--- Flash movies (seconds since the page opened, what happened) ---', ...flashLines, '', '--- Sing-Along room (the videos it was given, and what happened with them) ---', ...(videoLines.length ? videoLines : ['(nothing yet)']), '', '--- end of the log ---', ...logLines.slice(-60).filter(l => !/^\[(stall|hle|sound)\]/.test(l))].join('\n');
     const b = $('copyLogBtn');
     try { await navigator.clipboard.writeText(text); b.textContent = 'Copied'; }
     catch (e) { const l = $('log'); l.style.display = 'block'; l.style.maxHeight = '60vh'; l.textContent = text; const r = document.createRange(); r.selectNodeContents(l); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); b.textContent = 'Press Ctrl+C'; }
@@ -766,7 +817,7 @@
   };
 
   window.__pto = {                                                   // handle for automated tests and for ?debug
-    get ready() { return ready; }, get audioFrames() { return audioFrames; }, get framesShown() { return framesShown; }, logLines,
+    get ready() { return ready; }, get audioFrames() { return audioFrames; }, get framesShown() { return framesShown; }, logLines, videoLines,
     selftest: () => worker.postMessage({ type: 'selftest' }), post: m => worker.postMessage(m), cleanNickname, nickKey: NICK_KEY,
     testPrint: d => showPrint(d),                                    // shows a page in the print window, as if the game had printed it
     testFlash: ev => onFlash(ev), fromWorker: d => onMessage({ data: d }), skipMovies, flashLines, movies, sent, seen, get ruffle() { return !!ruffleApi; }, get warm() { return warmState; }, warmUp: warmRuffle,     // acts as if the worker had sent this Flash event

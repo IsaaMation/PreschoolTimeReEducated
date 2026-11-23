@@ -105,6 +105,11 @@
   #flashLayer { position: absolute; inset: 0; z-index: 2; background: #000; }
   #flashLayer ruffle-player, #flashLayer .flashMovie { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
   #flashSkip { position: absolute; right: 10px; bottom: 10px; z-index: 3; background: rgba(11, 23, 48, .82); }
+  /* the Sing-Along room's videos (videos.js) are played on the TV's screen, over the game's window for them */
+  #flashLayer .videoBox { position: absolute; background: #000; pointer-events: auto; overflow: hidden; border-radius: 4px; }
+  #flashLayer .videoBox video { display: block; width: 100%; height: 100%; object-fit: contain; background: #000; outline: none; }
+  #flashLayer .videoMsg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 14px; text-align: center; color: #fff; background: rgba(0, 0, 0, .85); font-size: clamp(.7rem, 1.9vw, 1rem); line-height: 1.4; }
+  #flashLayer .videoMsg[hidden] { display: none; }
   #notice { position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 3; width: fit-content; max-width: calc(100% - 20px); padding: 7px 12px; border-radius: 8px; background: rgba(11, 23, 48, .92); border: 1px solid var(--edge); font-size: .85rem; color: var(--fg); pointer-events: none; }
   #kb { position: fixed; left: 0; bottom: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; margin: 0; font-size: 16px; pointer-events: none; }
 </style>
@@ -134,6 +139,7 @@
           </div>
           <p id="nickNote" class="note">Optional. The game shows this instead of “Player”. It is a <b>local</b> nickname: kept in this browser only, <b>not saved online</b>, never sent anywhere.</p>
           <p id="flashNote" class="note hide"></p>
+          <p id="videoNote" class="note hide"></p>
           <button id="start" class="primary" type="button" disabled>Start</button>
         </div>
         <p id="status" role="status" aria-live="polite">Looking for the game files…</p>
@@ -160,6 +166,8 @@
       <button id="fsBtn" type="button" title="Full screen. In Chrome and Edge a short press of Esc still reaches the game in full screen (hold Esc to leave it)">Full screen</button>
       <button id="muteBtn" type="button" aria-pressed="false">Sound: on</button>
       <button id="syncBtn" type="button" aria-pressed="false" aria-controls="syncPanel" title="Adjust how the sound lines up with the picture">Sync</button>
+      <button id="videoBtn" type="button" title="Add video files from this computer to the Sing-Along room (the TV in the Backyard). Videos in the videos folder next to this page are in it already.">Videos…</button>
+      <input id="videoPick" type="file" multiple accept="video/*,.mp4,.m4v,.webm,.ogv,.mov,.mkv" hidden aria-label="Choose videos for the Sing-Along room">
       <button id="escBtn" class="hide" type="button" title="Press the Esc key (skips the intro)">Esc</button>
       <button id="spaceBtn" class="hide" type="button" title="Press the space bar (Little Einsteins' Blast Off)">Space</button>
       <button id="kbBtn" class="hide" type="button" aria-pressed="false" title="Show the on-screen keyboard">Keyboard</button>
@@ -186,6 +194,8 @@
     <div id="printPages"></div>
   </div>
   <input id="kb" type="text" tabindex="-1" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done" aria-label="Keyboard input">
+<script src="emu/videolist.js"></script>
+<script src="videos.js"></script>
 <script src="main.js"></script>
 </body>
 </html>
