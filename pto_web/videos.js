@@ -17,7 +17,7 @@
   const P = G.PTOVideos = {};
   const doc = G.document;
 
-  let cfg = { debug: false, note: () => { }, muted: () => false, base: doc ? doc.baseURI : '' };
+  let cfg = { debug: false, note: () => { }, muted: () => false, base: doc ? doc.baseURI : '', keep: true };       // keep: remember the pictures between visits (?nokeep turns it off)
   let sendFn = null;                                   // posts a message to the worker (null until the worker exists)
   let folder = [], added = [], items = [], gen = 0, folderState = 'idle';        // folder: from videos/ ; added: picked on the page ; items: what the TV shows now
   const byId = new Map();                              // every video of every list so far (the game may still hold buttons of an older one)
@@ -28,7 +28,7 @@
   const note = s => { try { cfg.note(s); } catch (e) { /* ignore */ } };
 
   P.init = o => { cfg = Object.assign(cfg, o || {}); };
-  P.info = () => ({ count: items.length, shown: Math.min(items.length, V.MAX), folder: folder.length, added: added.length, folderState, gen, over: Math.max(0, folder.length + added.length - V.MAX) });
+  P.info = () => ({ count: items.length, shown: Math.min(items.length, V.MAX), folder: folder.length, added: added.length, folderState, gen, over: Math.max(0, folder.length + added.length - V.MAX), pictures: P.pictures() });
   P.items = () => items.slice();
   P.byId = id => byId.get(id) || null;
 
@@ -40,7 +40,7 @@
     let list = null, how = '';
     try { list = V.parseList(await get(new URL('videos/videos.json', cfg.base || doc.baseURI).href)); how = 'videos.json'; } catch (e) { /* no list: maybe a plain folder listing */ }
     if (!list) { try { list = V.parseList(await get(new URL('videos/', cfg.base || doc.baseURI).href)); how = 'folder listing'; } catch (e) { /* no folder */ } }
-    folder = (list || []).map(e => ({ file: e.file, title: e.title, size: e.size, url: urlOf(e.file), local: false }));
+    folder = (list || []).map(e => ({ file: e.file, title: e.title, size: e.size, mtime: e.mtime || 0, url: urlOf(e.file), local: false }));
     folderState = list ? 'ok' : 'none';
     note('[videos] the videos folder: ' + (list ? folder.length + ' video(s), read from ' + how : 'not found (no videos/ folder next to this page, or the server does not list it)'));
   }
@@ -50,7 +50,7 @@
     for (const f of Array.from(files || [])) {
       if (!f || !(V.isVideoName(f.name) || /^video\//i.test(f.type || ''))) continue;
       if (folder.some(e => e.file === f.name) || added.some(e => e.file === f.name)) continue;
-      added.push({ file: f.name, title: V.cleanTitle(f.name), size: f.size || 0, url: URL.createObjectURL(f), local: true }); n++;
+      added.push({ file: f.name, title: V.cleanTitle(f.name), size: f.size || 0, mtime: Math.floor((f.lastModified || 0) / 1000), url: URL.createObjectURL(f), local: true }); n++;
     }
     if (n) rebuild('added ' + n);
     return n;
@@ -59,7 +59,7 @@
 
   function rebuild(why) {
     const all = folder.concat(added).sort((a, b) => V.compareNames(a.file, b.file));
-    items = all.slice(0, V.MAX).map((e, i) => Object.assign({}, e, { id: V.videoId(gen + 1, i), index: i, thumb: null, poster: false }));
+    items = all.slice(0, V.MAX).map((e, i) => Object.assign({}, e, { id: V.videoId(gen + 1, i), index: i, thumb: null, poster: false, tries: 0, why: '', gaveUp: false }));
     gen++; jobs++;
     for (const it of items) { it.gen = gen; byId.set(it.id, it); }
     note('[videos] list ' + gen + ' (' + why + '): ' + items.length + ' video(s) on the TV' + (all.length > V.MAX ? ', ' + (all.length - V.MAX) + ' more than fit are left out' : ''));
@@ -146,9 +146,11 @@
   P._drawThumbs = drawThumbs;                          // (tests)
 
   /* ------------------------------------------------------------------------------------------ frames of the videos */
+  /** what the browser says went wrong with a video (MediaError.code), in words */
+  const mediaWhy = el => { const c = el && el.error && el.error.code; return c === 4 ? 'the browser could not open this video: it is a kind of video the browser does not play, or the file could not be read' : c === 3 ? 'the browser could not decode this video' : c === 2 ? 'the video could not be read (network)' : c === 1 ? 'reading the video was stopped' : ''; };
   const once = (el, ev, ms) => new Promise((res, rej) => {
     const t = setTimeout(() => { cleanup(); rej(new Error('timeout (' + ev + ')')); }, ms);
-    const ok = () => { cleanup(); res(); }, bad = () => { cleanup(); rej(new Error('error while waiting for ' + ev)); };
+    const ok = () => { cleanup(); res(); }, bad = () => { cleanup(); rej(new Error(mediaWhy(el) || 'error while waiting for ' + ev)); };
     const cleanup = () => { clearTimeout(t); el.removeEventListener(ev, ok); el.removeEventListener('error', bad); };
     el.addEventListener(ev, ok); el.addEventListener('error', bad);
   });
@@ -179,23 +181,117 @@
     } finally { try { v.removeAttribute('src'); v.load(); } catch (e) { /* ignore */ } }
     return best;
   }
-  async function makePosters(myGen, lay) {
-    let next = 0, done = 0, failed = 0;
-    const worker = async () => {
-      while (next < items.length) {
-        if (myGen !== gen) return;                     // a newer list: this queue is finished
-        const it = items[next++];
+  /* ------------------------------------------------------------------------------------------ pictures kept between visits */
+  // A frame of each video is kept in the browser, in a small database of its own (the game's saved data is not touched), under the file's name, size and
+  // time of change.  The next time the page opens, the buttons have their pictures at once; and a video that cannot be read just now (the browser busy, a
+  // disk waking up) does not leave a plain card where a picture was.  "Clear saved data" on the page empties it (P.forgetPictures).
+  const KEEP_DB = 'preschool-time-online-video-pictures', KEEP_STORE = 'frames', KEEP_MAX = 300;
+  let keepOpening = null;
+  const keepDb = force => {                            // (force: "Clear saved data" empties the database also when the page was opened with ?nokeep)
+    if (!G.indexedDB || (!cfg.keep && !force)) return Promise.resolve(null);
+    return keepOpening || (keepOpening = new Promise(res => {
+      try {
+        const r = G.indexedDB.open(KEEP_DB, 1);
+        r.onupgradeneeded = () => { const st = r.result.createObjectStore(KEEP_STORE); st.createIndex('at', 'at'); };
+        r.onsuccess = () => res(r.result); r.onerror = () => res(null); r.onblocked = () => res(null);
+      } catch (e) { res(null); }
+    }));
+  };
+  const keyOf = it => 'p1|' + it.file + '|' + (it.size || 0) + '|' + (it.mtime || 0);
+  const memo = new Map();                              // the same, in memory: a new list (a video was added) does not ask the database again
+  const memoPut = (key, cv) => { memo.delete(key); memo.set(key, cv); while (memo.size > 80) memo.delete(memo.keys().next().value); };
+  async function keptFrame(it) {
+    if (!cfg.keep) return null;
+    const key = keyOf(it), m = memo.get(key); if (m) return m;
+    const db = await keepDb(); if (!db) return null;
+    const blob = await new Promise(res => { try { const q = db.transaction(KEEP_STORE).objectStore(KEEP_STORE).get(key); q.onsuccess = () => res(q.result && q.result.blob || null); q.onerror = () => res(null); } catch (e) { res(null); } });
+    if (!blob || !G.createImageBitmap) return null;
+    try {
+      const bmp = await G.createImageBitmap(blob), cv = doc.createElement('canvas'); cv.width = bmp.width; cv.height = bmp.height;
+      cv.getContext('2d').drawImage(bmp, 0, 0); try { bmp.close(); } catch (e) { /* ignore */ }
+      if (!cv.width || !cv.height) return null;
+      memoPut(key, cv); return cv;
+    } catch (e) { return null; }
+  }
+  async function keepFrame(it, cv) {
+    if (!cfg.keep) return;
+    memoPut(keyOf(it), cv);
+    try {
+      const db = await keepDb(); if (!db) return;
+      const blob = await new Promise(res => { try { cv.toBlob(b => res(b), 'image/jpeg', 0.9); } catch (e) { res(null); } }); if (!blob) return;
+      await new Promise(res => {
         try {
-          const fr = await grabFrame(it);
-          if (myGen !== gen) return;
-          if (!fr) { failed++; continue; }
-          it.thumb = drawThumbs(it, lay.w, lay.h, fr); it.poster = true; done++;
-          send({ type: 'videos', gen: myGen, thumb: it.index, bytes: it.thumb.slice().buffer });
-        } catch (e) { failed++; note('[videos] no picture from "' + it.file + '": ' + (e && e.message)); }
+          const t = db.transaction(KEEP_STORE, 'readwrite'), st = t.objectStore(KEEP_STORE);
+          st.put({ blob, at: Date.now() }, keyOf(it));
+          const c = st.count();
+          c.onsuccess = () => { let extra = c.result - KEEP_MAX; if (extra > 0) { const cur = st.index('at').openKeyCursor(); cur.onsuccess = () => { const k = cur.result; if (k && extra-- > 0) { st.delete(k.primaryKey); k.continue(); } }; } };
+          t.oncomplete = t.onerror = t.onabort = () => res();
+        } catch (e) { res(); }
+      });
+    } catch (e) { /* not kept: made again next time */ }
+  }
+  /** forget the kept pictures ("Clear saved data") */
+  P.forgetPictures = async () => {
+    memo.clear();
+    try { const db = await keepDb(true); if (!db) return; await new Promise(res => { try { const t = db.transaction(KEEP_STORE, 'readwrite'); t.objectStore(KEEP_STORE).clear(); t.oncomplete = t.onerror = t.onabort = () => res(); } catch (e) { res(); } }); } catch (e) { /* ignore */ }
+  };
+
+  /* ------------------------------------------------------------------------------------------ making the pictures */
+  const RETRY_AFTER = [4000, 15000, 45000];            // ms: a picture that could not be made is tried again after these waits
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  /** where the pictures of the newest list stand: how many are ready, how many are still being made (not tried yet, or in the making), and which could not be made
+   * (`retrying`: another try is still to come) */
+  P.pictures = () => ({
+    total: items.length, ready: items.filter(it => it.poster).length, making: items.filter(it => !it.poster && !it.why).length,
+    failed: items.filter(it => !it.poster && it.why).map(it => ({ file: it.file, why: it.why, retrying: !it.gaveUp })),
+  });
+  async function makePosters(myGen, lay) {
+    const fresh = () => myGen === gen;
+    let kept = 0, made = 0;
+    const give = (it, fr) => {
+      it.thumb = drawThumbs(it, lay.w, lay.h, fr); it.poster = true; it.why = '';
+      send({ type: 'videos', gen: myGen, thumb: it.index, bytes: it.thumb.slice().buffer });
+      changed();
+    };
+    const attempt = async it => {
+      it.tries++;
+      try {
+        const fr = await grabFrame(it);
+        if (!fresh()) return;
+        if (!fr) { it.why = 'no picture'; changed(); return; }
+        give(it, fr); made++; keepFrame(it, fr);
+      } catch (e) {
+        if (!fresh()) return;
+        it.why = (e && e.message) || 'unknown'; note('[videos] no picture from "' + it.file + '": ' + it.why + (it.tries > 1 ? ' (try ' + it.tries + ')' : ''));
+        changed();
       }
     };
-    await Promise.all([worker(), worker()]);
-    if (myGen === gen) note('[videos] pictures for list ' + myGen + ': ' + done + ' made from the videos, ' + failed + ' left as plain cards');
+    const pass = async list => {                       // two at a time
+      let next = 0;
+      const worker = async () => { while (next < list.length && fresh()) await attempt(list[next++]); };
+      await Promise.all([worker(), worker()]);
+    };
+    // 1. the pictures kept from before: all at once
+    await Promise.all(items.map(async it => {
+      const fr = await keptFrame(it);
+      if (fr && fresh() && !it.poster) { give(it, fr); kept++; }
+    }));
+    if (!fresh()) return;
+    // 2. the others from the videos
+    await pass(items.filter(it => !it.poster));
+    if (!fresh()) return;
+    const plain = () => items.filter(it => !it.poster).length;
+    note('[videos] pictures for list ' + myGen + ': ' + made + ' made from the videos, ' + (kept ? kept + ' kept from an earlier visit, ' : '') + plain() + ' left as plain cards' + (plain() ? ' for now (another try follows)' : ''));
+    // 3. what could not be made is tried again a few times (a browser that was busy, a file that was still being copied)
+    for (const waitMs of G.__ptoRetryAfter || RETRY_AFTER) {                      // (tests set shorter waits)
+      if (!plain()) break;
+      await wait(waitMs); if (!fresh()) return;
+      const again = items.filter(it => !it.poster); if (!again.length) break;
+      const before = made; await pass(again); if (!fresh()) return;
+      note('[videos] another try for ' + again.length + ' picture(s): ' + (made - before) + ' made, ' + plain() + ' still plain');
+    }
+    for (const it of items) if (!it.poster) it.gaveUp = true;
+    changed();
   }
 
   /* ------------------------------------------------------------------------------------------ the game's mouse arrow */

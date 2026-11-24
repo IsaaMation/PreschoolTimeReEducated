@@ -337,6 +337,13 @@
   function onVideoRoom(d) {
     vnote('[videos] the Sing-Along room opened with ' + d.count + ' video(s) (list ' + d.gen + ')');
     if (d.count) ensureArrow();
+    const pc = d.count && window.PTOVideos ? PTOVideos.pictures() : null;       // (a button whose picture is not there yet shows a plain card until the TV is opened again)
+    if (pc && pc.making) { vnote('[videos] the room opened with ' + pc.making + ' picture(s) still being made'); notice('Some of the TV\'s pictures are still being made. Leave the TV and open it again in a moment: they will be there.', 9000); }
+    else if (pc && pc.failed.length) {
+      const f = pc.failed, again = f.some(x => x.retrying);
+      vnote('[videos] the room opened with ' + f.length + ' button(s) without a picture: ' + f.map(x => '"' + x.file + '" (' + x.why + ')').join(', '));
+      notice((f.length === 1 ? 'No picture could be made from "' + f[0].file + '" (' + f[0].why + ')' : 'No picture could be made from ' + f.length + ' of the videos') + '. ' + (f.length === 1 ? 'Its button shows' : 'Their buttons show') + ' a plain card' + (again ? ' for now; the page tries again, and a picture that comes shows the next time you open the TV' : '') + '.', 9000);
+    }
     if (!d.count && window.PTOVideos) setTimeout(() => { PTOVideos.noVideos().catch(() => { }); }, 1000);       // (the room has to fade in first)
   }
   /** Ruffle's own boxes (the hardware-acceleration warning, the save manager, the right-click menu, the play button) have no place over this game */
@@ -603,7 +610,7 @@
   worker.postMessage({ type: 'scan', base, debug });
   /* the Sing-Along room's videos (see videos.js): the folder videos/ is read now, long before the game could need the list */
   if (window.PTOVideos) {
-    PTOVideos.init({ note: vnote, muted: () => muted, base: document.baseURI });
+    PTOVideos.init({ note: vnote, muted: () => muted, base: document.baseURI, keep: !params.has('nokeep') });
     PTOVideos.attach((msg, transfer) => { if (worker) worker.postMessage(msg, transfer || []); });
     PTOVideos.onChange(showVideoInfo);
     PTOVideos.start();
@@ -613,7 +620,9 @@
   function showVideoInfo(i) {
     const b = $('videoBtn'); if (b) b.textContent = i.count ? 'Videos (' + i.count + ')…' : 'Videos…';
     const n = $('videoNote'); if (!n) return;
-    n.textContent = 'Sing-Along videos (the TV in the Backyard): ' + (i.count ? i.count + ' found' + (i.folder ? ' in the videos folder' : '') + (i.added ? (i.folder ? ', ' : ' ') + i.added + ' added here' : '') + (i.over ? ' (' + i.over + ' more than fit on the TV are left out)' : '') + '.' : 'none yet. Put video files (.mp4 or .webm) in the videos folder next to this page, or add some below.');
+    const pc = i.pictures, nf = pc ? pc.failed.length : 0, pics = !i.count || !pc ? '' : pc.ready === pc.total ? ' Their pictures are ready.' : pc.making ? ' Making their pictures (' + pc.ready + ' of ' + pc.total + ' ready)…'
+      : ' Pictures: ' + pc.ready + ' of ' + pc.total + ' made; the browser could not read ' + (nf === 1 ? 'one video' : nf + ' videos') + (pc.failed.some(x => x.retrying) ? ' (trying again)' : ', whose button' + (nf === 1 ? ' stays a plain card' : 's stay plain cards')) + '.';
+    n.textContent = 'Sing-Along videos (the TV in the Backyard): ' + (i.count ? i.count + ' found' + (i.folder ? ' in the videos folder' : '') + (i.added ? (i.folder ? ', ' : ' ') + i.added + ' added here' : '') + (i.over ? ' (' + i.over + ' more than fit on the TV are left out)' : '') + '.' + pics : 'none yet. Put video files (.mp4 or .webm) in the videos folder next to this page, or add some below.');
     n.classList.toggle('hide', i.folderState === 'idle' || i.folderState === 'loading');
   }
   function addVideos(list) {
@@ -853,7 +862,9 @@
       wipeTimer = setTimeout(() => { wipeTimer = 0; $('wipeBtn').textContent = 'Clear saved data'; }, 4000);
       return;
     }
-    clearTimeout(wipeTimer); keepNick(''); worker.postMessage({ type: 'wipe' });       // (the nickname is one of the things kept in this browser)
+    clearTimeout(wipeTimer); keepNick('');       // (the nickname is one of the things kept in this browser, so are the pictures of the Sing-Along videos)
+    const wipe = () => worker.postMessage({ type: 'wipe' });
+    if (window.PTOVideos && PTOVideos.forgetPictures) PTOVideos.forgetPictures().then(wipe, wipe); else wipe();
   };
 
   window.__pto = {                                                   // handle for automated tests and for ?debug

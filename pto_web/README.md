@@ -158,11 +158,24 @@ More about it:
   small Flash movie (`stub.swf`) that streamed it from that server. The player's stand-in for the server answers those two requests from your
   videos (the button pictures are made by the page: a plain card with the name at first, then a frame of the video), and the page shows the
   video instead of the Flash movie. Nothing is sent over the internet.
+* **The button pictures.** The page makes each picture from a frame of its video: it takes three frames (at 8, 30 and 55 % of the video's
+  length) and uses the brightest one. This starts when the page has the list, two videos at a time, so it is usually done long before the TV is
+  opened; reading big files from a slow disk can take longer. A button whose picture is not there yet is a plain card with the video's name, and
+  the video still plays when it is clicked. The game asks for the pictures when the TV is opened and keeps what it was given until the page is
+  closed, so **a picture that comes after the TV was opened shows the next time the TV is opened**: leave the TV and open it again (a message on
+  the screen says so when pictures are still being made). Every picture that was made is also kept in your browser, in a small store of its own
+  (tied to the file's name, size and date; 300 pictures at most), so the next time the page is opened the pictures are there at once and the
+  videos need not be read again for them. A changed file gets a new picture, **Clear saved data** empties the store as well, and opening the page
+  with `?nokeep` makes it neither use nor keep the pictures. When the browser cannot make a picture (it cannot read that video, or it takes
+  too long) the page tries again after 4, 15 and 45 seconds, and then leaves the plain card; the start card and the message on opening the TV
+  name the video and say why, and the log (`?debug`) has a line `[videos] no picture from "…"` with the reason.
 * **If the room is empty or a video does not play:** open the page with `?debug`, open the room, press **Copy log**; its section
   "Sing-Along room" says how many videos the page found (and where), what the game was given, what it asked for, which video was played and
   how it ended.
 * **Hosting:** upload `videos/` and `sounds/` with the rest. The videos need a server that answers Range requests (they are needed to play
-  and to skip about in a video); the file types must be sent with their video types (`video/mp4`, `video/webm`).
+  and to skip about in a video); the file types must be sent with their video types (`video/mp4`, `video/webm`). `serve.py` also tells the
+  page each file's size and date, which is what a kept picture is tied to; in a `videos.json` of your own the entries may carry
+  `"size"` (bytes) and `"mtime"` (seconds since 1970) for the same purpose, and without them a kept picture is tied to the file's name alone.
 
 ## Using it
 
@@ -227,7 +240,7 @@ More about it:
 ```
 index.html, main.js     the page: screen, mouse/keyboard, sound start button, version, lesson and nickname choice, Flash layer, print view
 worker.js               runs the emulator in a Web Worker, reads the game files with Range requests, saves players
-videos.js               the Sing-Along room's videos on the page's side: the list, the button pictures, the player on the TV, the sound of the empty room
+videos.js               the Sing-Along room's videos on the page's side: the list, the button pictures (made, and kept in the browser), the player on the TV, the sound of the empty room
 audio-worklet.js        plays the game's sound through Web Audio (short fixed queue that never throws a voice away, measures how late the sound is)
 emu/*.js                the emulator: x86 compiler (to JavaScript), Windows / Miles / Bink / Smacker / MP3 / network / printer / Flash-control
                         stand-ins, server.js (the stand-in for Disney's server), the readers for zips and Wise installers, and hle.js
@@ -284,7 +297,12 @@ saved in the browser, and the nickname, stay as they are.
   (its own arrow standing still beside the TV) and the mouse moved on, one whole arrow was seen at the game's place, the same pixels of the
   arrow's picture on both sides of the TV's edge, and no second one at the mouse; with the arrow well inside the TV it followed the mouse at
   once while the game was held up; and the old way (the page's arrow always at the mouse) was seen to give the two arrows of the complaint
-  (`tests/arrow_seam_page_test.js`, pictures in `work/out/seam/`). **Not tried:** how it feels in Opera GX or Chrome on a real computer (the
+  (`tests/arrow_seam_page_test.js`, pictures in `work/out/seam/`). The button pictures (see "The button pictures") were watched with the real 2.0.0 and 2.0.3 games: the game takes the pictures that are there
+  when the TV is first opened, and a picture that arrives later shows the next time the TV is opened; the kept pictures (also after the page was opened again), a
+  changed file, **Clear saved data**, `?nokeep`, the new tries after a picture could not be made and the messages about it were tried in headless Chromium with WebM
+  clips (`tests/videos_page_test.js`). Once, on a real computer with two videos, the buttons were plain cards, and later they showed their pictures again by
+  themselves; the cause was not found (it was not seen here), so this version adds the new tries, the kept pictures and the messages that say what happened rather
+  than a fix for one known fault. **Not tried:** how it feels in Opera GX or Chrome on a real computer (the
   tests ran in headless Chromium, on a computer with no mouse to wave about), MP4 (H.264) playback (that
   Chromium has no H.264 decoder; Chrome, Edge and Opera have one), Firefox and Safari, videos of real size and length, and getting to the room by
   clicking the TV in the Backyard with the mouse (in the tests the game was told to open the room itself). The game opens its window for a video
@@ -386,6 +404,7 @@ saved in the browser, and the nickname, stay as they are.
 | The nickname is not shown | it is given to the game when the game starts: set it on the start card before pressing **Start**; only some screens show a name (for example "Good Job, …!") |
 | A movie part is skipped | see "Flash movies" above: Ruffle must be in `ruffle/` |
 | The Sing-Along room (the TV in the Backyard) has no videos | put video files in `videos/` and reload with Ctrl+F5; the start card says how many the page found; see section 5. With none, the room only plays a spoken clip |
+| A button in the Sing-Along room is a plain card with just the video's name, not a frame of the video | the picture was not there when the TV was opened (it was still being made, or the browser could not make it). **Leave the TV and open it again**: the game asks again then. The start card (under **Videos…**) and a message on the screen say whether pictures are still being made or which video had none and why; `?debug` → **Copy log** has the lines `[videos] pictures for list …` and `[videos] no picture from "…"`. If it keeps happening for one video, convert that video to MP4 (H.264 + AAC) |
 | A button in the Sing-Along room says "Check Back Soon" | the game did not get a picture for that button (it uses its own plain one); the video still plays when it is clicked. Copy the log (`?debug`) if it happens for every button |
 | Over a Sing-Along video the arrow is the browser's plain one, not the game's orange one | the page could not read the game's arrow picture (`Common/arrow.tga`); open the page with `?debug`, play a video and press **Copy log**: the "Sing-Along room" section says why |
 | The arrow seems to lag behind the mouse, near the edge of a Sing-Along video or anywhere else in the game | the game's own arrow is always a little late (see "The mouse arrow" in section 5 and "Sound and picture in step"); over the middle of a video the page's arrow follows the mouse at once. If it is late everywhere, `?debug` shows the picture delay and **Sync** lets you move it to the left; a slow computer makes it worse |

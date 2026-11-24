@@ -101,7 +101,7 @@
     return L.join('\r\n');
   };
 
-  /** what a list of videos from a server may look like: ["a.mp4", ...], [{ file, title, size }], { videos: [...] }, or a web server's folder listing */
+  /** what a list of videos from a server may look like: ["a.mp4", ...], [{ file, title, size, mtime }], { videos: [...] }, or a web server's folder listing (`mtime`, seconds: when the file last changed, if the server says) */
   V.parseList = text => {
     let data = null;
     try { data = JSON.parse(text); } catch (e) { /* maybe a folder listing */ }
@@ -112,14 +112,14 @@
       for (const e of arr) {
         const file = typeof e === 'string' ? e : e && typeof e.file === 'string' ? e.file : null;
         if (!file || !V.isVideoName(file)) continue;
-        out.push({ file, title: (e && typeof e.title === 'string' && e.title.trim()) || V.cleanTitle(file), size: e && +e.size > 0 ? +e.size : 0 });
+        out.push({ file, title: (e && typeof e.title === 'string' && e.title.trim()) || V.cleanTitle(file), size: e && +e.size > 0 ? +e.size : 0, mtime: e && +e.mtime > 0 ? Math.floor(+e.mtime) : 0 });
       }
     } else if (data === null && /<a\s/i.test(String(text))) {        // (python -m http.server and most others list a folder as links)
       const re = /<a\s[^>]*href\s*=\s*["']([^"']+)["']/gi; let m;
       while ((m = re.exec(text))) {
         let f = m[1].split(/[?#]/)[0]; try { f = decodeURIComponent(f); } catch (e) { continue; }
         if (f.indexOf('/') >= 0 || !V.isVideoName(f)) continue;
-        out.push({ file: f, title: V.cleanTitle(f), size: 0 });
+        out.push({ file: f, title: V.cleanTitle(f), size: 0, mtime: 0 });
       }
     }
     const seen = new Set();

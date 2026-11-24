@@ -75,7 +75,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         for n in os.listdir(folder):
             full = os.path.join(folder, n)
             if n.lower().endswith(VIDEO_EXT) and os.path.isfile(full):
-                found.append({'file': n, 'size': os.path.getsize(full)})
+                found.append({'file': n, 'size': os.path.getsize(full), 'mtime': int(os.path.getmtime(full))})
         found.sort(key=lambda e: e['file'].lower())
         body = (json.dumps(found, indent=1) + '\n').encode('utf-8')
         self.send_response(200)
