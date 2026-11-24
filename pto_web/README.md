@@ -135,11 +135,22 @@ More about it:
   after a few seconds the game is told that the video is over, so that the room does not get stuck. Such a file can be converted:
   `ffmpeg -i in.flv -c:v libx264 -c:a aac out.mp4`.
 * **The mouse arrow.** The game draws its arrow into its own picture, and the video lies over that picture, so the game's arrow would vanish
-  under it (cut off at the TV's edge). The page therefore draws the same arrow, over the video, wherever the mouse is: also when the mouse is
-  just outside the TV and the arrow's body reaches in over the video. The arrow's picture (`Common/arrow.tga`) is read from your own game
-  files, nothing of it comes with the page. The game is still told where the mouse is, so its own arrow follows underneath; clicks on the
-  player stay in the player (they do not press the game's buttons under it). If the picture cannot be read, the browser's plain arrow shows
-  over the video instead, and the log says why.
+  under it (cut off at the TV's edge). The page therefore draws the same arrow over the video. The arrow's picture (`Common/arrow.tga`) is read
+  from your own game files, nothing of it comes with the page. The game is still told where the mouse is, so its own arrow follows underneath;
+  clicks on the player stay in the player (they do not press the game's buttons under it). If the picture cannot be read, the browser's plain
+  arrow shows over the video instead, and the log says why.
+  *Why it is one arrow, and why it can lag.* The game's own arrow is always a little behind the mouse: the game draws it in its own turn, a
+  moment after the mouse has moved, and its picture then travels through the page (and, outside a video, is held back a little so that picture
+  and sound stay together, see "Sound and picture in step"). The page's copy has no such delay, so where the two meet, at the TV's edge, an
+  arrow drawn at the mouse next to the game's late one looked like two arrows, one behind the other (the page used to do exactly that). Now the
+  page asks the game where its arrow is (every picture the game sends says where the mouse was for the game) and draws only what the game
+  cannot: the part of the arrow that is over the TV is the game's own arrow carried on, at the very place of the game's arrow and cut off at
+  the TV's edge, so that the part over the TV and the part beside it join up into one arrow. Only when all of the arrow is well inside the TV
+  (24 pixels of the game's picture from every edge, the arrow's body counted) is the game's arrow out of sight, and then the page's arrow
+  follows the mouse at once, with no delay at all; in the last few pixels before that it slides from one to the other. This also means that
+  near the TV's edges, and over the control bar, where the arrow's body reaches out of the TV, the arrow is the game's, and as late as it is in the rest
+  of the game. If the game has not drawn anything for a moment (it is busy), the arrow follows the mouse. While a video plays on the TV the
+  picture is not held back for the sound, which makes the game's arrow outside the video a bit quicker too.
 * **No videos.** When the room opens with an empty list, one of four spoken clips (`sounds/NOVIDEOS1.mp3` … `NOVIDEOS4.mp3`) is played, picked
   at random but never the same one twice in a row. Clips named `NOVIDEOS5.mp3` … `NOVIDEOS8.mp3` that you put in `sounds/` are used as well.
   The **Sound** button mutes it.
@@ -169,6 +180,9 @@ More about it:
   back by the same amount, so a picture and its sound arrive together. **Sync** opens a slider for the cases the browser cannot
   know about: if the sound still comes after what you see (Bluetooth speakers and some TVs), move it to the right; if the mouse
   feels slow, move it to the left. The setting is kept in the browser. `?avoffset=120` in the address sets it for one visit.
+  The game's mouse arrow is part of its picture, so it is held back with the rest: that is the delay you see between the mouse and the arrow
+  (about the delay that `?debug` shows as "picture delay"). While a Sing-Along video plays on the TV the picture is not held back, because the
+  sound of the video comes from the video itself.
 * Players and settings are kept in the browser (IndexedDB), per site and per browser. **Clear saved data** removes them, and the nickname (below) too.
 * **What the game remembers.** In the original, a few things outlived a visit: the episode the player had reached, the grown-ups' settings (Preferences) and the
   backyard plant. They come back here too, and stay **in this browser only** (IndexedDB, per site and per browser; nothing is sent anywhere):
@@ -265,7 +279,13 @@ saved in the browser, and the nickname, stay as they are.
   place was measured in the real game's pictures (2.0.0, 2.0.3 and 2.0.6: the game puts the arrow's picture level with the mouse and 2 pixels
   above it, which is what the page does), the page was seen to read the arrow's picture from the real game's own files with the real game
   running in it (all three versions), and a real game picture was put together with the page's arrow to see that the two meet at the TV's
-  edge. **Not tried:** MP4 (H.264) playback (that
+  edge. The one-arrow rule (see "The mouse arrow") was tried with the real 2.0.6 game in the real page: every picture the game sends says where
+  the mouse was for the game, and the game's arrow is found in that picture at exactly that place; with the game held up for six seconds
+  (its own arrow standing still beside the TV) and the mouse moved on, one whole arrow was seen at the game's place, the same pixels of the
+  arrow's picture on both sides of the TV's edge, and no second one at the mouse; with the arrow well inside the TV it followed the mouse at
+  once while the game was held up; and the old way (the page's arrow always at the mouse) was seen to give the two arrows of the complaint
+  (`tests/arrow_seam_page_test.js`, pictures in `work/out/seam/`). **Not tried:** how it feels in Opera GX or Chrome on a real computer (the
+  tests ran in headless Chromium, on a computer with no mouse to wave about), MP4 (H.264) playback (that
   Chromium has no H.264 decoder; Chrome, Edge and Opera have one), Firefox and Safari, videos of real size and length, and getting to the room by
   clicking the TV in the Backyard with the mouse (in the tests the game was told to open the room itself). The game opens its window for a video
   at the top left of its screen and never moves it, so the page puts the video where the TV's black screen is (161, 78, 480 × 360 in the game's
@@ -368,6 +388,7 @@ saved in the browser, and the nickname, stay as they are.
 | The Sing-Along room (the TV in the Backyard) has no videos | put video files in `videos/` and reload with Ctrl+F5; the start card says how many the page found; see section 5. With none, the room only plays a spoken clip |
 | A button in the Sing-Along room says "Check Back Soon" | the game did not get a picture for that button (it uses its own plain one); the video still plays when it is clicked. Copy the log (`?debug`) if it happens for every button |
 | Over a Sing-Along video the arrow is the browser's plain one, not the game's orange one | the page could not read the game's arrow picture (`Common/arrow.tga`); open the page with `?debug`, play a video and press **Copy log**: the "Sing-Along room" section says why |
+| The arrow seems to lag behind the mouse, near the edge of a Sing-Along video or anywhere else in the game | the game's own arrow is always a little late (see "The mouse arrow" in section 5 and "Sound and picture in step"); over the middle of a video the page's arrow follows the mouse at once. If it is late everywhere, `?debug` shows the picture delay and **Sync** lets you move it to the left; a slow computer makes it worse |
 | "This browser cannot play …" on the TV | the file's video or sound is of a kind the browser does not know; convert it to MP4 (H.264 + AAC), see section 5 |
 | A Flash screen stays white, or **Skip movie** / **Back** does nothing | open the page with `?debug`, reproduce it, press **Copy log**; the "Flash movies" section says what happened (see "Flash movies"); a white movie may also draw correctly with `?flashrenderer=canvas` |
 | A voice (for example the "Today is ..." line) is cut off or has a gap | open the page with `?debug`, play to that point and press **Copy log**; the "sound" section says what happened to that voice: `voice ends: ... (X s of Y s)` with X below Y means that the game ended it early (a line `voice stopped by the game` is there too) or that the file is shorter than it should be (a `NOTE:` line); `the game was busy for N ms` lines mean that the computer was held up while it played (the voice waits and goes on, it is not cut). Keep that section for a report |

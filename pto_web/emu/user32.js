@@ -209,7 +209,7 @@
     d('CreateCursor', 7, () => m.newHandle({ type: 'cursor' }));
     d('LoadIconA', 2, () => m.newHandle({ type: 'icon' }));
     d('LoadImageA', 6, () => m.newHandle({ type: 'image' }));
-    d('GetCursorPos', 1, (m, p) => { m.wr32(p, m.input.x); m.wr32(p + 4, m.input.y); return 1; });
+    d('GetCursorPos', 1, (m, p) => { const I = m.input; m.wr32(p, I.x); m.wr32(p + 4, I.y); m.pollX = I.x; m.pollY = I.y; return 1; });      // (pollX, pollY: the place the game was last told: the game draws its mouse arrow there, the page wants to know where that is)
     d('LoadStringA', 4, (m, hinst, id, buf, n) => {
       const ent = m.findRes(6, (id >> 4) + 1);
       if (!ent) return 0;

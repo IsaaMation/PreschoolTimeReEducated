@@ -42,12 +42,12 @@
   const MAX_PICTURE_DELAY = 400;                       // ms
   const PICTURE_LAG = 45;                              // ms: a picture needs about 25 ms from this page to the screen (the sound's figure includes the speaker), and sound that is 20 ms late is not noticed
   const storedOffset = () => { try { return parseFloat(localStorage.getItem('pto-avoffset')); } catch (e) { return NaN; } };
-  let pictureDelay = 0, soundDelay = 0, delayHist = [], lastNote = 0;
+  let pictureDelay = 0, soundDelay = 0, delayHist = [], lastNote = 0, videoUp = 0;       // videoUp: how many video players (the Sing-Along room's TV) are on show
   let userOffset = params.has('avoffset') ? parseFloat(params.get('avoffset')) : storedOffset();
   if (!isFinite(userOffset)) userOffset = 0;
   userOffset = lim(Math.round(userOffset), -MAX_PICTURE_DELAY, MAX_PICTURE_DELAY);
   function applyDelay(now) {
-    if (muted || !soundDelay) { pictureDelay = 0; return; }
+    if (muted || !soundDelay || videoUp) { pictureDelay = 0; return; }       // (videoUp: a video plays on the TV; its sound is its own and the game's picture around it is nearly still, so the picture is not held back, and the game's arrow is that much less late)
     const want = lim(Math.round(soundDelay - PICTURE_LAG + userOffset), 0, MAX_PICTURE_DELAY);
     if (now || Math.abs(want - pictureDelay) >= 6 || (want === 0) !== (pictureDelay === 0)) pictureDelay = want;     // (ignore tiny wobble)
   }
@@ -121,6 +121,9 @@
       if (cvs.width !== f.w || cvs.height !== f.h) { cvs.width = f.w; cvs.height = f.h; }
       ctx.putImageData(new ImageData(new Uint8ClampedArray(f.buf), f.w, f.h), 0, 0); framesShown++;
       if (debug && f.te) { avV.push({ te: f.te, d: epochNow() - f.te }); if (avV.length > 4000) avV.shift(); }
+      shownMouse = typeof f.mx === 'number' && typeof f.my === 'number' ? { x: f.mx, y: f.my } : null;       // (where the game's own arrow is in the picture that is on show now)
+      movedAt = 0;
+      if (videoUp) arrowAt(lastPointer);
       recycle(f);
     }
     if (fq.length && !rafId) rafId = requestAnimationFrame(draw);
@@ -317,12 +320,18 @@
     } catch (e) { arrowState = 'failed'; vnote('[videos] the game\'s mouse arrow could not be read (' + (e && e.message || e) + '): over the video the browser\'s own arrow shows'); }
   }
   /** where the mouse is (the last pointer event of the stage), so that an arrow can be drawn the moment a video appears or the window changes size */
-  let lastPointer = null, videoUp = 0;                 // videoUp: how many video players are on show
+  let lastPointer = null, shownMouse = null;
+  const ARROW_STALE_MS = 400;                          // the game has not answered a move of the mouse with a new picture for this long: it is busy, its arrow is no guide any more
+  let movedAt = 0, arrowTimer = 0, staleMs = ARROW_STALE_MS;       // movedAt: when the mouse first moved after the picture on show was made (0: no move is waiting for the game)
+  /** The game's own arrow is part of the game's picture, which reaches the screen a little after the game drew it (the game takes its turn, and the picture is held back
+   * so that it comes with its sound), so it is always a little behind the mouse.  The player's arrow goes with it where the two meet (shownMouse: where the game's arrow is in
+   * the picture that is on show), and with the mouse itself where the game's arrow is out of sight under the video: see PTOVideos. */
   function arrowAt(e) {
     if (!videoUp) return;
-    let gx = null, gy = null;
-    if (e && e.pointerType !== 'touch') { const c = cvs.getBoundingClientRect(); if (c.width) { gx = Math.floor((e.clientX - c.left) * cvs.width / c.width); gy = Math.floor((e.clientY - c.top) * cvs.height / c.height); } }
-    for (const mv of movies.values()) if (mv.video && mv.api && mv.api.cursor && mv.el && !mv.hidden) mv.api.cursor(gx, gy);
+    let real = null;
+    if (e && e.pointerType !== 'touch') { const c = cvs.getBoundingClientRect(); if (c.width) real = { x: Math.floor((e.clientX - c.left) * cvs.width / c.width), y: Math.floor((e.clientY - c.top) * cvs.height / c.height) }; }
+    const late = movedAt && performance.now() - movedAt > staleMs;       // (the game is not keeping up: its arrow is left where it is, the page's follows the mouse)
+    for (const mv of movies.values()) if (mv.video && mv.api && mv.api.cursor && mv.el && !mv.hidden) mv.api.cursor(real, late ? null : shownMouse);
   }
   /** the room opened (a list of videos was asked for): with none in it, one of the NOVIDEOS sounds is played */
   function onVideoRoom(d) {
@@ -407,8 +416,11 @@
   }
   /** the layer is only there while a movie is on show */
   function flashChanged() {
-    let shown = 0, whole = false; videoUp = 0;
+    let shown = 0, whole = false; const hadVideo = videoUp > 0; videoUp = 0;
     for (const mv of movies.values()) if (mv.el && !mv.hidden) { shown++; if (mv.whole) whole = true; if (mv.video) videoUp++; }
+    if ((videoUp > 0) !== hadVideo) applyDelay(true);                                       // (no picture delay while a video plays, and back to it afterwards)
+    if (videoUp && !arrowTimer) arrowTimer = setInterval(() => arrowAt(lastPointer), 120);       // (a game that has stopped drawing is noticed even with the mouse at rest)
+    else if (!videoUp && arrowTimer) { clearInterval(arrowTimer); arrowTimer = 0; }
     const was = !flashLayer.classList.contains('hide');
     let plain = false; for (const mv of movies.values()) if (mv.el && !mv.hidden && !mv.video) plain = true;       // (a video has its own controls, and the game's red X under the TV)
     flashLayer.classList.toggle('hide', !shown); flashSkip.classList.toggle('hide', !plain);
@@ -643,8 +655,8 @@
     return { x: clamp(Math.floor((e.clientX - r.left) * cvs.width / r.width), 0, cvs.width - 1), y: clamp(Math.floor((e.clientY - r.top) * cvs.height / r.height), 0, cvs.height - 1) };
   }
   cvs.addEventListener('pointermove', e => { send(Object.assign({ type: 'mousemove' }, gamePos(e))); });
-  stage.addEventListener('pointermove', e => { lastPointer = e; arrowAt(e); });          // (from the canvas and from a video player over it)
-  stage.addEventListener('pointerleave', () => { lastPointer = null; arrowAt(null); });
+  stage.addEventListener('pointermove', e => { lastPointer = e; if (!movedAt) movedAt = performance.now(); arrowAt(e); });          // (from the canvas and from a video player over it)
+  stage.addEventListener('pointerleave', () => { lastPointer = null; movedAt = 0; arrowAt(null); });
   cvs.addEventListener('pointerdown', e => {
     if (e.button > 2) return;
     try { cvs.setPointerCapture(e.pointerId); } catch (x) { /* ignore */ }
@@ -852,7 +864,8 @@
     pause: () => worker.postMessage({ type: 'pause' }), resume: () => worker.postMessage({ type: 'resume' }),
     level: () => { if (!analyser) return -1; const a = new Float32Array(analyser.fftSize); analyser.getFloatTimeDomainData(a); let s = 0; for (const v of a) s += v * v; return Math.sqrt(s / a.length); },
     stall: ms => worker.postMessage({ type: 'stall', ms }),
-    get clips() { return clipStats; }, get pictureDelay() { return pictureDelay; }, get soundDelay() { return soundDelay; },
+    testSoundDelay: d => { delayHist = [d, d, d]; soundDelay = d; applyDelay(true); },       // (tests) as if the sound had been measured to take d ms to get to the speaker
+    get clips() { return clipStats; }, get pictureDelay() { return pictureDelay; }, get soundDelay() { return soundDelay; }, get shownMouse() { return shownMouse; }, get videoUp() { return videoUp; }, set arrowStaleMs(v) { staleMs = v; }, get arrowStaleMs() { return staleMs; },
     avRaw: () => ({ a: avA.slice(), v: avV.slice(), now: performance.timeOrigin + performance.now() }),
     av: (sinceMs) => {                                  // delays of what was produced in the last `sinceMs` milliseconds
       const t = performance.timeOrigin + performance.now() - (sinceMs || 3000);

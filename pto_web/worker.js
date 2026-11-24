@@ -278,7 +278,11 @@ function emitFrame(force) {
   const need = V.width * V.height * 4;
   let buf = pool.pop(); if (!buf || buf.length !== need) buf = new Uint8ClampedArray(need);
   const rgba = m.getFrameRGBA(buf);
-  post('frame', { w: V.width, h: V.height, buf: rgba.buffer, te: epoch() }, [rgba.buffer]);
+  // (mx, my: where the game's own mouse arrow is in this picture, so that the page can carry it on over a video. The game draws its arrow where GetCursorPos last told it the mouse was
+  // (measured: that is the arrow's place in 100 % of the pictures, while the mouse's place at the moment the picture is sent is one step ahead of it in about 5 %: the game can begin
+  // a frame in one pump and finish it in the next, and a new mouse place is handed over at the start of a pump). Until the game has asked even once, the mouse's place)
+  const I = m.input, mx = m.pollX !== undefined ? m.pollX : I ? I.x : undefined, my = m.pollY !== undefined ? m.pollY : I ? I.y : undefined;
+  post('frame', { w: V.width, h: V.height, buf: rgba.buffer, te: epoch(), mx, my }, [rgba.buffer]);
   stats.frames++;
 }
 

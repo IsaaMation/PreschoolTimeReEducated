@@ -201,13 +201,21 @@
   /* ------------------------------------------------------------------------------------------ the game's mouse arrow */
   /* The game draws its own mouse arrow (Common/arrow.tga) into its picture, and the video lies on top of that picture, so the arrow went
    * under the video: cut off at the TV's edge, and over the video the browser's plain arrow showed instead.  So the page draws the same arrow
-   * on top of the video itself: inside the player's box, which cuts it off where the TV ends (outside it the game's own arrow is on show, and
-   * the two meet exactly).  The picture of the arrow is read from the game's own data (main.js asks the worker for it), not shipped with the page. */
+   * on top of the video itself.  The game's arrow is always a little behind the mouse (the game draws it in its own turn, and its picture is
+   * held back for the sound), the page's arrow is not, so two things are looked after:
+   *  - where the game's own arrow is in view (it sticks out beside the TV, or lies at its edge) the page's arrow is the game's arrow carried on over the video: it is drawn where
+   *    the game's arrow is in the picture that is on show (the worker says where that is: shown), cut off at the TV's edge, so the two halves make one arrow;
+   *  - where the game's arrow is out of sight under the video (and so is the arrow at the mouse: the whole of it is well inside the TV), the page's arrow follows the mouse itself, at once.
+   *    In between (the last few pixels before the edge) it slides from one to the other.  When the mouse leaves the TV faster than the game follows, the page's arrow stays with the game's.
+   * The picture of the arrow is read from the game's own data (main.js asks the worker for it), not shipped with the page. */
   const HOT = { x: 0, y: 2 };                          // the game puts the picture's top-left corner at (mouse x - 0, mouse y - 2): the arrow's tip is at the mouse
   let sprite = null;                                   // { w, h, canvas }
   const spriteWaiters = [];                            // players that were opened before the picture was there
   P.cursorFile = 'common/arrow.tga';
   P.hasCursorSprite = () => !!sprite;
+  P.cursorBounds = () => sprite ? Object.assign({ w: sprite.w, h: sprite.h }, sprite.vis) : null;       // (tests) the arrow's picture and the part of it that can be seen
+  P.cursorImage = () => sprite ? sprite.canvas : null;                                                   // (tests)
+  const SLIDE = 24;                                    // game pixels: how far under the video the game's arrow has to be before the page's arrow is all for the mouse
   /** a TGA picture (type 2 or 10, 24 or 32 bits: what the game's cursor files are) -> { w, h, data (RGBA, top row first) }, or null */
   P.decodeTga = u8 => {
     try {
@@ -233,12 +241,19 @@
       return { w, h, data: out };
     } catch (e) { return null; }
   };
+  /** the part of a picture { w, h, data (RGBA) } that can be seen: its soft shadow is nearly see-through (alpha under 24 of 255), so it does not count.  The arrow is "under the
+   * video" when all of that is.  { x0, y0, x1, y1 }: the first and last column and row; the whole picture when nothing can be seen */
+  P.visibleBounds = t => {
+    let x0 = t.w, y0 = t.h, x1 = -1, y1 = -1;
+    for (let y = 0; y < t.h; y++) for (let x = 0; x < t.w; x++) if (t.data[(y * t.w + x) * 4 + 3] >= 24) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    return x1 < 0 ? { x0: 0, y0: 0, x1: t.w - 1, y1: t.h - 1 } : { x0, y0, x1, y1 };
+  };
   /** the arrow's file (bytes) has been read: players that are open (or open later) draw it.  Returns false when it is not a picture we can read. */
   P.setCursorSprite = bytes => {
     const t = P.decodeTga(bytes); if (!t || !doc) return false;
     const c = doc.createElement('canvas'); c.width = t.w; c.height = t.h;
     c.getContext('2d').putImageData(new G.ImageData(t.data, t.w, t.h), 0, 0);
-    sprite = { w: t.w, h: t.h, canvas: c };
+    sprite = { w: t.w, h: t.h, canvas: c, vis: P.visibleBounds(t) };
     note('[videos] the game\'s mouse arrow (' + t.w + 'x' + t.h + ') is ready to be drawn over the video');
     for (const f of spriteWaiters.splice(0)) { try { f(); } catch (e) { /* not ours */ } }
     return true;
@@ -329,16 +344,27 @@
       haveSprite = true; box.classList.add('hascur');                   // (from now on the player hides the browser's own arrow)
     };
     adopt(); if (!haveSprite) spriteWaiters.push(adopt);
-    /** where the mouse is, in the game's 800x600 picture (null: not on the page / a touch: no arrow) */
-    const cursorAt = (gx, gy) => {
+    /** real: where the mouse is, in the game's 800x600 picture (null: not on the page / a touch: no arrow); shown: where the game's own arrow is in the picture that is
+     * on show (null: not known: the same place as the mouse) */
+    const cursorAt = (real, shown) => {
       if (!haveSprite) return;
       const R = V.RECT, bw = box.clientWidth;
-      if (gx === null || gx === undefined || !isFinite(gx) || !isFinite(gy) || !bw) { cur.hidden = true; return; }
-      const x = gx - HOT.x - R.x, y = gy - HOT.y - R.y;
-      if (x >= R.w || y >= R.h || x + sprite.w <= 0 || y + sprite.h <= 0) { cur.hidden = true; return; }       // (none of it is over the TV)
+      if (!real || !isFinite(real.x) || !isFinite(real.y) || !bw) { cur.hidden = true; return; }
+      const T = shown && isFinite(shown.x) && isFinite(shown.y) ? shown : real, v = sprite.vis;
+      // how far inside the TV's screen all of an arrow that can be seen is, from the nearest edge (0 or less: some of it is outside, in view): the game's arrow, and the arrow at the mouse.
+      // Only when both are well inside is the game's arrow out of sight under the video AND the mouse's arrow all over the video: then the page's arrow may go with the mouse.
+      // (If the mouse has already left the TV and the game's arrow has not, the page's arrow stays with the game's, so there is no arrow drawn beside the TV that the game then pulls back.)
+      const roomOf = p => Math.min(p.x - HOT.x + v.x0 - R.x, p.y - HOT.y + v.y0 - R.y, R.x + R.w - (p.x - HOT.x + v.x1 + 1), R.y + R.h - (p.y - HOT.y + v.y1 + 1));
+      const room = Math.min(roomOf(T), roomOf(real));
+      const f = room <= 0 ? 0 : Math.min(1, room / SLIDE);            // 0: go with the game's arrow, 1: go with the mouse
+      const x = T.x + (real.x - T.x) * f - HOT.x - R.x, y = T.y + (real.y - T.y) * f - HOT.y - R.y;       // the picture's top-left corner, from the player's, in game pixels
+      if (!f && (x >= R.w || y >= R.h || x + sprite.w <= 0 || y + sprite.h <= 0)) { cur.hidden = true; return; }       // (none of it is over the TV)
       const k = bw / R.w;
       if (k !== curK) { curK = k; cur.style.width = (sprite.w * k) + 'px'; cur.style.height = (sprite.h * k) + 'px'; }
-      cur.style.left = (x * k) + 'px'; cur.style.top = (y * k) + 'px'; cur.hidden = false;
+      cur.style.transform = 'translate(' + (x * k) + 'px,' + (y * k) + 'px)';
+      // (the part of the arrow that is over the TV is the page's; the part beside it is the game's own, so the page's copy is cut off at the TV's edge. With the game's arrow hidden it is not)
+      cur.style.clipPath = f ? '' : 'inset(' + [Math.max(0, -y), Math.max(0, x + sprite.w - R.w), Math.max(0, y + sprite.h - R.h), Math.max(0, -x)].map(d => (d * k) + 'px').join(' ') + ')';
+      cur.hidden = false;
     };
 
     v.src = it.url;
