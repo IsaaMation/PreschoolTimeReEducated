@@ -1,0 +1,541 @@
+# Playhouse Disney Preschool Time Online – browser player
+
+Runs the original Windows program of *Playhouse Disney Preschool Time Online* (Disney Online / ImaginEngine, versions
+2.0.0, 2.0.3 and 2.0.6) in a web browser. The game program (`DisneyPO.exe`) is executed by an x86 emulator written in
+JavaScript, with replacement versions of the Windows, Miles sound, Bink video, Smacker video, MP3, network, printer and
+Flash-control libraries. Nothing is converted or unpacked: the player reads your installers and zips directly, where they
+lie, so every screen, movie and sound behaves as in the original program.
+
+**This folder does not contain the game.** The installers and zips come from your own copy; you put them in the `game/`
+folder and host them yourself.
+
+## 1. Put your game files in `game/`
+
+The player takes any mix of these and works out the rest by itself (it looks inside, not only at the names):
+
+| File | Version | Notes |
+| --- | --- | --- |
+| `PlayhouseInstall2.0.0.exe`, `PlayhouseInstall2.0.3.exe`, `PlayhouseInstall2.0.6.exe` | the version in the name | the installers (Wise). The player reads the game's files straight out of them, nothing is run |
+| `Playhouse Disney Preschool Time Online 2.0.6.zip` (or any zip with the game's `Data` folder) | 2.0.6 | the program and its data |
+| `PackageBC2.0.3.zip`, `PackageBC2.0.6.zip` … | by name | the shared activities |
+| `LP0316_lesson_0316_2.0.3.zip`, `LP0516_lesson_0516_2.0.6.zip` … | by name and lesson number | one lesson each (`LP02xx` = 2.0.0, `LP03xx` = 2.0.3, `LP05xx` = 2.0.6) |
+| one big zip that holds several of the above | | the zips inside it must be stored **without compression** (the player cannot read a compressed zip inside a zip in place) |
+
+* The page lists the versions it finds and the lessons of each one. The lesson you pick is the one the game starts with.
+* A version needs the game program: an installer, or a zip with `DisneyPO.exe`. **Installers inside a big zip are compressed**, so put
+  the standalone `PlayhouseInstall2.0.3.exe` next to the big zip instead.
+* The archives are **not** downloaded as a whole. The player asks the server for the pieces the game reads (HTTP Range
+  requests), so the game starts after a few megabytes, not after 3.6 GB.
+* Which files are used: `serve.py` (section 2) lists the `.zip` and `.exe` files in `game/` by itself, so on your own computer
+  you only have to drop the files in. On another web server the player has no way to list a folder: either write a
+  `game/files.json` (a JSON array: `["PlayhouseInstall2.0.3.exe", "Big zip.zip"]`, or objects like
+  `{"name": "…", "url": "https://other.host/…", "size": 123}`; `files.json.example` shows it), or use the usual names from the table
+  (`PlayhouseInstall2.0.6.exe`, `PlayhouseInstallABC2.0.6.exe`, `Playhouse Disney Preschool Time Online 2.0.6.zip`, `PackageBC2.0.6.zip` … for each version).
+* The `PlayhouseInstallABC…` installers and the `…-DC.exe` copies are not needed: a version's program comes from its plain
+  installer or its zip, and the shared activities from `PackageBC`. An installer with exactly the same contents as another one
+  is skipped, and an installer the player cannot read is passed over (the start card mentions it only when that version has
+  no other program).
+* More lessons can be added later as extra zips (for example `LP0516_lesson_0516_2.0.6.zip`): put them into `game/` and, if you use
+  a `files.json`, add them to it.
+* You can also use the **Use my own files…** button on the page (or drop files on it) to play from files on your own
+  computer. They are read in place by the browser, not uploaded anywhere.
+
+## 2. Try it on your own computer
+
+```
+python3 serve.py            # then open http://localhost:8000/ and press Start
+```
+
+(On Windows `py serve.py` or `python serve.py` does the same.) The window that runs it says how many files it found in `game/`. Keep that window open while you play: the
+game reads its files from this server all the time, and if something goes wrong on the server's side the window prints it (see "A game file that cannot be read just now" below).
+
+`serve.py` is an ordinary static server that also answers Range requests (Python's built-in `http.server` does not).
+Opening `index.html` straight from the disk (`file://`) does not work: the page needs a web server.
+
+## 3. Host it
+
+Upload the whole folder (including `game/`) to any web server or static host. Requirements:
+
+* **HTTP Range requests** must work for the files in `game/` (nginx, Apache, Caddy, IIS, S3/CloudFront and most CDNs do this
+  by default). If they do not, the player shows a message saying so.
+* Files must be sent **uncompressed** (no `Content-Encoding: gzip` on `.zip`/`.exe`), or byte ranges will not line up.
+* Use **https** (or `http://localhost`). Sound, saving and full screen need a secure context in current browsers.
+* The game files may live on another host: use `index.html?base=https://files.example.com/pto/` and let that host answer
+  CORS requests (`Access-Control-Allow-Origin`, `Access-Control-Allow-Headers: Range`,
+  `Access-Control-Expose-Headers: Content-Length, Content-Range`).
+* If you add Ruffle (below), the server must send `.wasm` files as `application/wasm`.
+
+## 4. Flash movies (optional: add Ruffle)
+
+Parts of the game (for example the Little Einsteins movies of 2.0.0) are Flash movies. This player does not contain a Flash
+player. It works with **[Ruffle](https://ruffle.rs)** (open source, MIT / Apache-2.0 licence) when you put it next to the page:
+
+1. Download Ruffle's **self-hosted web build** from <https://ruffle.rs/downloads> (the zip called "selfhosted").
+2. Unpack it into a folder called `ruffle/` next to `index.html`, so that `ruffle/ruffle.js` exists, with the two `.wasm` files
+   beside it (about 30 MB in all). (Or keep it anywhere and open the page with `?ruffle=https://…/ruffle.js`.)
+
+Tested with Ruffle 0.8.0. The page only uses Ruffle's documented web API, so newer builds should work as well.
+
+With Ruffle the movie is shown over the game screen while the game waits for it, for the movie's real length, and a **Skip movie**
+button is shown. Ruffle is loaded in the background when the game starts (long before the first movie), its own pop-up boxes are
+switched off, and the **Sound** button also controls the movies. On a computer whose browser has no hardware graphics
+acceleration Ruffle can be slow. Without Ruffle, or with `?ruffle=off`, the game's movie parts are skipped after a moment and the game carries
+on (the page says so once). The start card says which of the two applies.
+
+**Two kinds of Flash in the game.** Most are *movies* (the intros): the game watches how far the movie has got and carries on when it
+is over; **Skip movie** (or **Esc**) says "it is over". Some are *applications* (in 2.0.3, for example, the day and night menus and the
+read-along books; the other versions have them too): the game puts one on screen and then does nothing but wait for its own **Back**
+button, which it draws over the application. Ruffle's picture covers that button, so the page shows its own: the button reads **Back**
+for an application, and pressing it (or Esc) does what the game's button does and the game carries on. If the game has not closed the
+window 2.5 seconds after a skip, the page hides Ruffle's picture anyway so that the game's own screen is what you see.
+
+**Files that an application loads.** An application often loads more files by a relative address (a menu that loads its games, a book
+that loads its pages). The original Flash control found them in the game's folders. Ruffle only knows this web page's server, so the page
+gives each application a base address of its own (`flashfiles/…`), answers Ruffle's requests for such addresses itself, and gets the
+files from the game's data (the zips and installers, wherever the file is in them). Nothing is copied to disk.
+
+**If a Flash screen stays white or does not work:** open the page with `?debug`, get to that screen, press **Copy log** and keep the
+text. Its section "Flash movies" says, with times, what the game asked for (movie or application, which file, the movie's size),
+what Ruffle did with it (started or not, what it reports about the file), every file the movie asked for and whether the game's data
+had it, what Ruffle wrote on the console (including the graphics renderer it chose), and what Skip/Back did.
+
+**If a movie is white although the log shows it started:** Ruffle chooses its graphics backend itself (it uses the graphics card where the
+browser offers it), and a driver or browser can draw some movies wrongly. Open the page with `?flashrenderer=canvas` (the plainest one,
+drawn without the graphics card) or `?flashrenderer=webgl`, `?flashrenderer=wgpu-webgl` or `?flashrenderer=webgpu` to make Ruffle use
+that one instead of its own choice, for example `http://localhost:8000/?debug&flashrenderer=canvas`. The log says which one Ruffle
+ended up with.
+
+**Manny's Workshop (2.0.6).** The lesson card of 2.0.6 has a badge with Manny on it (to reach the card without waiting for the introduction, keep pressing **Esc**
+until it shows up). The badge starts the largest Flash application of the game, an interactive toy room made with Adobe Flex: the Workshop, where the Read-alongs,
+the Spanish Book, the Lullabies, the Toy Box (eight games), the Craft Box, the Painting Set, the Sing-Along TV and *Today's Job* are. It is an *application* in the sense
+above (the game waits for its **Back** button, which the page shows; **Esc** does the same). The page does five more things for it. Two of them need an option of Ruffle's
+(`urlRewriteRules` and `socketProxy`; Ruffle 0.8.0 has both):
+
+* **Its files.** Manny was written to run from the game's folder and asks for its files by `file:///…` addresses. The page has Ruffle turn those into `flashfiles/…`
+  addresses and serves them from the game's data, as for the other applications.
+* **Small changes to nine of its movies.** Ruffle 0.8.0 cannot start nine of Manny's movies as they are. Most of them load their artwork as a small embedded movie and build
+  their scene one frame later; Ruffle does not have the artwork's pieces ready by then (it depends on how busy the computer is), so they stop with a "TypeError #1009" and
+  show a plain grey screen. And in the Workshop the seven tool objects take each other's mouse clicks (Ruffle finds the button under the mouse by the picture the button
+  shows, Flash by the button's hit shape). While the page serves these movies it changes them in a few places: a view whose scene is not there yet tries again a frame later,
+  and each tool takes the mouse only inside its own box. The changes are listed at the top of `mannyfix.js`; they are made only to the exact files that were tested (the page
+  checks the length and the CRC-32 of each file first) and any other file is served as it is. The Sing-Along TV's movie gets a few more changes, for your videos (the bullet
+  "Your videos on the Sing-Along TV" below). `?nomannyfix` in the address turns all of them off, to see what Ruffle does with the originals (and then the TV shows no videos).
+* **Printing and keeping a picture.** The Craft Box (print a template) and the Painting Set (print; or the safe, which keeps the picture for the scrapbook) send the picture
+  over a network connection to the game itself (to `localhost:12345`, where the game listens for its Flash applications). A web page cannot make such a connection, so
+  Ruffle is given a stand-in for it (its option `socketProxy`) that never leaves the page: what Manny sends goes into the game's own listening socket, and what the game
+  answers goes back. The game then does what it did on Windows: it prints (the page shows its print window, see "Using it") or writes the picture into its saved files
+  (a `.tga` picture file named after the date and the time, in its `userdata\PrintQueue` folder, which the page keeps in the browser with the other saved files). This needs a game
+  that listens on port 12345, which is the case for 2.0.6; where nothing listens, the connection is refused and nothing is sent.
+* **No internet.** Manny asks Disney's server for its list of Sing-Along videos (`movies.ini`). That server is gone, so the page answers "not found" at once instead of
+  sending the request out (open the page with `?flashnet` to let Flash applications use the internet). Ruffle writes two errors about this on its console (`movies.ini` and
+  `onPtoConfigFailed`); they are expected.
+* **Your videos on the Sing-Along TV.** The Sing-Along TV of the Workshop played its songs as streams from Disney's servers, which are gone (and a browser cannot play such streams
+  anyway). The videos of section 5 (the `videos/` folder, and the ones added with **Videos…**) go on this TV instead, the same ones as in the Backyard's TV of 2.0.0 and 2.0.3. For that,
+  `mannyfix.js` changes the TV's movie a little more (checked by length and CRC-32 like the others): its own eight buttons are hidden, and it tells the page when its scene is up, when
+  its red **X** is pressed and when it is left, by asking for three made-up addresses (`pto-tv-up`, `pto-tv-stop`, `pto-tv-down`) that the page answers itself; nothing is sent anywhere.
+  While the TV is up the page lays eight buttons of its own over its screen, in the places where the movie's own were, with the same pictures as in the room (a frame of each video, with
+  its name on it); the one under the mouse lights up. A click plays that video on the TV's screen, in the page's own small player (the one of the room: click the picture to pause or play,
+  and a bar with a play / pause button, a seek bar, the time and a sound button shows while the mouse moves over it; the page's **Sound** button mutes it). The TV's own **X**, **Esc**
+  and the end of the video stop it and bring the buttons back (**Esc** does nothing else while a video plays; with no video playing it ends Manny, as always), and the round Manny badge at
+  the top left leaves the TV, as before. Manny draws its mouse arrow inside the movie, under everything on the page, so while the mouse is over a button or over the video the page moves
+  the movie's own arrow out of sight and the browser's arrow shows (a hand over the buttons); when the mouse leaves, the movie's arrow is back where the mouse is. With more than eight videos
+  there are pages: two arrows and a number such as `2/5` appear in the free places of the TV's middle row. Up to 36 videos are used (five pages), as in the room. With no videos the TV's
+  screen says so (a note on it), and one of the spoken clips of the room's empty TV is played, as there. `?debug` has the TV's lines in its log (`[videos] Manny's TV …`: up, plays,
+  stopped, gone).
+
+**What does not work in Manny.** Disney's own songs on the Sing-Along TV: they were streams from Disney's servers, which are gone, and a browser cannot play such streams anyway. The TV plays your
+videos instead (above), and with none it shows an empty screen with a note. Manny's scrapbook is not reachable in 2.0.6 (its screen is not one of the views that the Workshop
+opens), so a picture that was kept cannot be looked at again; the file is saved, though. To get a Painting Set drawing out as a picture file, use its printer button and then
+**Save picture** in the print view (a PNG).
+
+## 5. Videos for the Sing-Along TV (optional)
+
+The Sing-Along room (the TV in the Backyard; the game calls the room "Video") of 2.0.0 and 2.0.3 used to load its videos from Disney's servers, which are gone, so
+in the original game it is empty. 2.0.6 has no such room: its Sing-Along TV is part of Manny's Workshop (section 4), and it streamed its songs from the same kind of server. The player can give
+both of them videos of your own (the steps are for the room of 2.0.0 and 2.0.3; for the TV of Manny the first bullet after them says how it differs):
+
+1. Put video files in the `videos/` folder next to `index.html`: `.mp4` (H.264 video with AAC sound plays in every browser) or `.webm`.
+   `.m4v`, `.ogv`, `.mov` and `.mkv` are tried as well and play if your browser knows what is inside them.
+2. Reload the page (Ctrl+F5). `serve.py` lists the folder for the page by itself (the window that runs it says how many videos it found).
+   A web server that cannot list a folder needs a file `videos/videos.json` instead: `["01 - Hot Potato.mp4", "02 - The Wheels on the Bus.mp4"]`,
+   or `[{"file": "hot-potato.mp4", "title": "Hot Potato"}]` to choose the name that is shown on the button.
+3. Start the game (2.0.0 or 2.0.3) and click the TV in the Backyard. Every video is a button on the TV's screen, with a frame of the video as its picture and its
+   name on it; the button lights up under the mouse. A click plays that video on the TV's screen in a small player of the page's own: click the
+   picture to pause or play, and a bar along its bottom edge (it shows while the mouse moves over the video, and stays while it is paused) has a
+   play / pause button, a seek bar, the time and a sound button. The game's own mouse arrow stays on top of the video. When the video ends,
+   the game goes on, as it did when its Flash player had played the video to the end. The game's red **X** under the TV stops it.
+
+More about it:
+
+* **Manny's Sing-Along TV (2.0.6).** The same `videos/` folder, the same list, the same button pictures (made by the page, kept in the browser) and the same player. Start 2.0.6, press the
+  badge with Manny on the lesson card (to reach the card without waiting, keep pressing **Esc**), go to the Workshop and click the TV. The page puts eight buttons of its own on the TV's screen, in the
+  places where the TV's own buttons are: they are always 128 × 96 in the game's 800 × 600 picture, and the names are the same as in the room. With more than eight videos there are
+  pages (two arrows and a number such as `2/5` in the middle row; 36 videos are the most, as in the room). A click plays a video on the TV's screen; the TV's **X**, **Esc** or the end of the
+  video stops it, and the round Manny badge at the top left leaves the TV. Over a button or the video the browser's arrow shows, not Manny's (see section 4). The note about empty
+  `videos/` and the spoken clips (`sounds/NOVIDEOS1.mp3` …) are the same as in the room. Everything of the TV's side is in `mannytv.js` and the changes to the TV's movie are in `mannyfix.js`;
+  `?nomannyfix` turns them off (and then the TV shows nothing to play).
+* **Order and names.** The buttons are in the order of the file names, numbers by their value ("2 …" before "10 …"). A number and a dash at the
+  start of a file name ("01 - ") only puts the video in its place and is not shown. The more videos, the smaller the buttons: up to 4 videos
+  give buttons of 240 × 180 (in the game's 800 × 600 picture), up to 9 give 160 × 120, up to 16 give 120 × 90, up to 25 give 96 × 72 and up to
+  36 give 80 × 60. No more than **36** videos fit on the TV; the rest are left out, and the start card says how many.
+* **Videos…** on the page, or dropping video files on the page, adds videos from anywhere on your computer. They are not copied: the browser
+  reads them in place, and they stay only until the page is closed. They show up the next time the room is opened.
+* **A video that the browser cannot play** (an MP4 with another kind of video than H.264, an old Flash `.flv`, …) shows a message on the TV, and
+  after a few seconds the game is told that the video is over, so that the room does not get stuck. Such a file can be converted:
+  `ffmpeg -i in.flv -c:v libx264 -c:a aac out.mp4`.
+* **The mouse arrow.** The game draws its arrow into its own picture, and the video lies over that picture, so the game's arrow would vanish
+  under it (cut off at the TV's edge). The page therefore draws the same arrow over the video. The arrow's picture (`Common/arrow.tga`) is read
+  from your own game files, nothing of it comes with the page. The game is still told where the mouse is, so its own arrow follows underneath;
+  clicks on the player stay in the player (they do not press the game's buttons under it). If the picture cannot be read, the browser's plain
+  arrow shows over the video instead, and the log says why.
+  *Why it is one arrow, and why it can lag.* The game's own arrow is always a little behind the mouse: the game draws it in its own turn, a
+  moment after the mouse has moved, and its picture then travels through the page (and, outside a video, is held back a little so that picture
+  and sound stay together, see "Sound and picture in step"). The page's copy has no such delay, so where the two meet, at the TV's edge, an
+  arrow drawn at the mouse next to the game's late one looked like two arrows, one behind the other (the page used to do exactly that). Now the
+  page asks the game where its arrow is (every picture the game sends says where the mouse was for the game) and draws only what the game
+  cannot: the part of the arrow that is over the TV is the game's own arrow carried on, at the very place of the game's arrow and cut off at
+  the TV's edge, so that the part over the TV and the part beside it join up into one arrow. Only when all of the arrow is well inside the TV
+  (24 pixels of the game's picture from every edge, the arrow's body counted) is the game's arrow out of sight, and then the page's arrow
+  follows the mouse at once, with no delay at all; in the last few pixels before that it slides from one to the other. This also means that
+  near the TV's edges, and over the control bar, where the arrow's body reaches out of the TV, the arrow is the game's, and as late as it is in the rest
+  of the game. If the game has not drawn anything for a moment (it is busy), the arrow follows the mouse. While a video plays on the TV the
+  picture is not held back for the sound, which makes the game's arrow outside the video a bit quicker too.
+* **No videos.** When the room opens with an empty list, one of four spoken clips (`sounds/NOVIDEOS1.mp3` … `NOVIDEOS4.mp3`) is played, picked
+  at random but never the same one twice in a row. Clips named `NOVIDEOS5.mp3` … `NOVIDEOS8.mp3` that you put in `sounds/` are used as well.
+  The **Sound** button mutes it.
+* **How it works.** The room asks a Disney server for a list of its videos and for a picture of each button, and plays a clicked video with a
+  small Flash movie (`stub.swf`) that streamed it from that server. The player's stand-in for the server answers those two requests from your
+  videos (the button pictures are made by the page: a plain card with the name at first, then a frame of the video), and the page shows the
+  video instead of the Flash movie. Nothing is sent over the internet.
+* **The button pictures.** The page makes each picture from a frame of its video: it takes three frames (at 8, 30 and 55 % of the video's
+  length) and uses the brightest one. This starts when the page has the list, two videos at a time, so it is usually done long before the TV is
+  opened; reading big files from a slow disk can take longer. A button whose picture is not there yet is a plain card with the video's name, and
+  the video still plays when it is clicked. The game asks for the pictures when the TV is opened and keeps what it was given until the page is
+  closed, so **a picture that comes after the TV was opened shows the next time the TV is opened**: leave the TV and open it again (a message on
+  the screen says so when pictures are still being made). Every picture that was made is also kept in your browser, in a small store of its own
+  (tied to the file's name, size and date; 300 pictures at most), so the next time the page is opened the pictures are there at once and the
+  videos need not be read again for them. A changed file gets a new picture, **Clear saved data** empties the store as well, and opening the page
+  with `?nokeep` makes it neither use nor keep the pictures. When the browser cannot make a picture (it cannot read that video, or it takes
+  too long) the page tries again after 4, 15 and 45 seconds, and then leaves the plain card; the start card and the message on opening the TV
+  name the video and say why, and the log (`?debug`) has a line `[videos] no picture from "…"` with the reason.
+* **If the room is empty or a video does not play:** open the page with `?debug`, open the room, press **Copy log**; its section
+  "Sing-Along room" says how many videos the page found (and where), what the game was given, what it asked for, which video was played and
+  how it ended.
+* **Hosting:** upload `videos/` and `sounds/` with the rest. The videos need a server that answers Range requests (they are needed to play
+  and to skip about in a video); the file types must be sent with their video types (`video/mp4`, `video/webm`). `serve.py` also tells the
+  page each file's size and date, which is what a kept picture is tied to; in a `videos.json` of your own the entries may carry
+  `"size"` (bytes) and `"mtime"` (seconds since 1970) for the same purpose, and without them a kept picture is tied to the file's name alone.
+
+## Using it
+
+* Mouse or touch works as in the original. The game uses just two keys: **Esc** skips the intro ("Press Escape to Skip"; while a Flash
+  movie or application is on screen the page also takes Esc as **Skip movie** / **Back**) and the
+  **space bar** is tapped in Little Einsteins' Blast Off. It has no text entry of its own (the nickname is typed on the start card, see below). In full screen the player asks Chrome and Edge to hand the
+  game a short press of Esc (holding Esc then leaves full screen); that one part could not be tried out here. Other browsers keep Esc
+  for leaving full screen, so leave it first.
+  On phones and tablets buttons for **Esc** and **Space** appear below the picture, next to a **Keyboard** button that brings up the
+  on-screen keyboard.
+* The game's **Print** button opens a print view on the page: **Print** sends the picture to your printer (or "Save as PDF"),
+  **Save picture** downloads it as a PNG, **Close** (or Esc) returns to the game. Manny's Craft Box prints a template as two pictures, one after the other: both stay in
+  the print view (**Print** puts each on a paper page of its own) and **Save picture** downloads one file for each (`preschool-time-picture-1.png`, `…-2.png`; your browser
+  may ask whether the page may download several files).
+* **Full screen**, **Sound** and **Sync** buttons sit below the picture. The game pauses while the tab is hidden.
+* **Sound and picture in step.** Sound needs a moment to reach the speakers; the page measures that delay and holds the picture
+  back by the same amount, so a picture and its sound arrive together. **Sync** opens a slider for the cases the browser cannot
+  know about: if the sound still comes after what you see (Bluetooth speakers and some TVs), move it to the right; if the mouse
+  feels slow, move it to the left. The setting is kept in the browser. `?avoffset=120` in the address sets it for one visit.
+  The game's mouse arrow is part of its picture, so it is held back with the rest: that is the delay you see between the mouse and the arrow
+  (about the delay that `?debug` shows as "picture delay"). While a Sing-Along video plays on the TV the picture is not held back, because the
+  sound of the video comes from the video itself.
+* Players and settings are kept in the browser (IndexedDB), per site and per browser. **Clear saved data** removes them, and the nickname (below) too.
+* **What the game remembers.** In the original, a few things outlived a visit: the episode the player had reached, the grown-ups' settings (Preferences) and the
+  backyard plant. They come back here too, and stay **in this browser only** (IndexedDB, per site and per browser; nothing is sent anywhere):
+  the game says where the player had got to when it is **left through its own Exit** (the round button at the top right, then *Parents' Corner (Exit)*
+  and *yes*), and the stand-in for Disney's server hands that number back when the game starts, so the next character comes up where the player left off
+  instead of the first one again. Closing the tab without leaving through the game's Exit does not tell the game's server anything (the same as in the original),
+  so the episode is only kept when the game was left the proper way. The Preferences and the plant are kept as the game writes them, whichever way it is left.
+  A picture that Manny's Painting Set kept with its safe (a picture file of about 0.75 MB, section 4) is kept as well, one more file for each picture.
+  **Clear saved data** removes all of it. What the original also kept on Disney's server (each player's skill levels per game, favourites, the reports for
+  parents) is **not** restored: that server is gone, and the game starts those afresh.
+* **Parents' Corner and Preferences.** The Exit button's menu has *Parents' Corner (Exit)*, *Keep Playing* and *Preferences*. Preferences ask for the grown-up's
+  password first (and so does leaving the game when the parental lock is on). There are no member accounts any more, so the stand-in accepts **any
+  password**: type anything and press Enter. There you can switch between *Guided Mode* and *Discovery Mode*, limit printing and turn the parental lock on or off;
+  *Save Changes* makes the game start over at its theme map with the new settings. In 2.0.3 the window is headed "MELISSA'S Preferences" (2.0.0 and 2.0.6 say "PLAYER'S"):
+  that program's own code sets the player's first name to "Melissa" whenever Preferences open. In a test with a nickname the game's name string read the nickname until
+  Preferences opened and "Melissa" at every look afterwards (the next 24 seconds, past *Save Changes* and the restart). That is the game's own doing, not a nickname being lost;
+  this player does not change the game's code, so it is left as it was. Where else that name might show was not looked at.
+* **Nickname.** The start card has an optional **Nickname** box. The game shows that name where it would otherwise say "Player" (for
+  example "Good Job, Nick!"). It is a **local nickname only**: it is kept in this browser on this computer (in the page's `localStorage`),
+  it is **not saved online**, and nothing about it is sent over the internet: the player's built-in stand-in for Disney's server gives it
+  to the game, and the game never reaches a real server. The box remembers it for your next visit. It is one name for the whole browser (it does not
+  create separate players or separate saves: what the game saves is kept as before). Up to 12 characters: letters, digits, spaces and `'` `.` `-`;
+  accents are dropped ("Zoë" becomes "Zoe"), other characters are dropped too, and a name with nothing left counts as no nickname. To remove it, empty the
+  box (it is forgotten at once), or use **Clear saved data** while playing. Enter in the box starts the game. A nickname is given to the game when it starts, so a
+  changed name shows from the next start on.
+* Address options: `?base=URL` (game folder), `?edition=2.0.3&lesson=LP0316` (pre-select a version and lesson), `?ruffle=URL` or
+  `?ruffle=off` (see above), `?debug` (frame rate, CPU use, download counters, the picture delay, how many pictures the native drawing routine did, the
+  game's own log and the key messages it gets, a **Copy log** button, and the stall recorder described below; `?debug&hle=off` turns the native drawing routine off,
+  `?debug&threads=coop` makes the game's threads wait for each other again instead of taking turns, both to compare), `?fixeddate=2009-11-15` (the date the game sees;
+  by default it sees today's date), `?avoffset=MS` (see above), `?nomannyfix` and `?flashnet` (see "Manny's Workshop" in section 4), `?debug&tracenet` (puts the game's
+  network calls, such as the connections of Flash applications, into the log), `?debug&netwaits=0,500,500` (the waits, in milliseconds, between the repeats of a failed
+  file read, see "A game file that cannot be read just now"; for trying only).
+* **A game file that cannot be read just now.** The game's files are read with many small requests to the web server. A request can fail at the network level (the browser's
+  *NetworkError*, "Failed to load '…/game/…zip'": the connection was refused or reset, the server was closed or restarted, a download or a virus scanner held the file for a moment)
+  or the server can answer "busy" (HTTP 408, 429, 502, 503, 504). That used to end the game at once with the red panel. Now the request is repeated, after waits of 0, 0.25, 0.5, 1, 2, 4,
+  8 and 12 seconds and then four more times 12 seconds (about 76 seconds in all). A hiccup of a moment (one or two failed tries) is only noted in the log; when the trouble lasts the page
+  says so: on the start card, or as a notice at the bottom of the game, *The game cannot read "…" right now (…). Trying again, 3 of 12…*, and another notice when the game can read again. The game's own clock stands still meanwhile, and when the server is back the game goes on where it was, so a server
+  that was closed can be started again in the meantime. Only after the last try the red panel appears; it says which file could not be read and how often it was tried (not "an error in
+  the emulator"), and **Try again** starts the game anew with the players it had saved. An answer that is *shorter* than what was asked for counts as a failure too. Chromium keeps the
+  beginning of an answer that was cut off and, for the next request for that part, asks the server only for the rest; when the server answers that request with an error (503 was tried), the
+  page is handed the beginning alone, with the status 206 as if it were everything (seen in a test: 21,845 bytes for a request of 65,536). A page that took those bytes for the file got a
+  wrong list of versions in the tests; now the answer is measured and asked for again. With `?debug`
+  the line at the top counts the repeated reads (*file reads repeated 5 times (5 recovered)*), and the log lines `[files] …` say which file and when (**Copy log** keeps them).
+  `serve.py` now answers a file that it cannot open or measure with "503, cannot be read just now", which the player repeats, instead of letting the error end the connection without any answer
+  (the browser shows that as the same *NetworkError*, and the server window prints the error); its queue for waiting connections holds 128 instead of Python's 5 (on Windows the connections
+  beyond the queue are refused outright). Tried: `tests/net_retry_test.js` (a stand-in for the browser's request, in which a third of the requests fail, some with short answers: 40 files of a
+  test zip come out byte for byte the same), `tests/serve_test.py` (the server's answers, also the awkward Range requests), and `tests/file_retry_page_test.js` (the real page and the real 2.0.0
+  game behind a proxy that drops connections, cuts answers off and answers "busy": every third request failing while the game starts and runs; the server gone while the game starts and
+  coming back; the server gone for good; the server gone for a few seconds in the middle of the game). It has not been tried on Windows or in Opera GX, and the cause of the one *NetworkError*
+  that was reported (v1.16, `PackageBC2.0.6.zip`) is not known: this makes the player survive such a failure, it does not remove its cause.
+* Slow downloads and short hold-ups of the computer do not disturb the game: its clock stands still while the page waits for a
+  file, and a hold-up is taken off its clock, so animations and video clips do not race to catch up. A voice or a sound effect is
+  never cut by a hold-up: if the computer is held up while one plays, it waits and goes on where it stopped (see "Voices that were cut off" below).
+* The game's online features talk to a built-in stand-in for Disney's server, which says "nothing to report" to almost everything.
+  Nothing is sent over the internet. It does answer four things: the game's **session check** (right after it starts, and then every four
+  minutes, the game asks the server whether its session is still good, and it stops with "Session Terminated – Please log out and try again"
+  when three checks in a row go unanswered, that is, about eight minutes after it started; the stand-in says "yes, still good"),
+  when you have given a nickname, the question "who is the player" (the answer is the nickname, as the player's first name), the **password** of the
+  Parents' Corner (always "yes") and the question "where did this player get to" (the answer is the episode the game itself reported when it was last left).
+
+## What is in this folder
+
+```
+index.html, main.js     the page: screen, mouse/keyboard, sound start button, version, lesson and nickname choice, Flash layer, print view
+worker.js               runs the emulator in a Web Worker, reads the game files with Range requests, saves players
+videos.js               the Sing-Along room's videos on the page's side: the list, the button pictures (made, and kept in the browser), the player on the TV, the sound of the empty room
+mannytv.js              Manny's Sing-Along TV (2.0.6) on the page's side: the eight buttons over the TV's screen, the pages, the player, the hand-over of the mouse (sections 4 and 5)
+mannyfix.js             the small changes that let Manny's Flash movies (2.0.6) start under Ruffle, and that hide the Sing-Along TV's own buttons: lists of changes for known files, no Flash code of its own (section 4)
+audio-worklet.js        plays the game's sound through Web Audio (short fixed queue that never throws a voice away, measures how late the sound is)
+emu/*.js                the emulator: x86 compiler (to JavaScript), Windows / Miles / Bink / Smacker / MP3 / network / printer / Flash-control
+                        stand-ins, server.js (the stand-in for Disney's server), the readers for zips and Wise installers, and hle.js
+                        (the game's picture-drawing routine, run natively)
+serve.py                local test server with Range support
+game/                   your installers and zips go here (and files.json)
+ruffle/                 optional: Ruffle's self-hosted web build
+videos/                 optional: your videos for the Sing-Along room (2.0.0, 2.0.3) and Manny's Sing-Along TV (2.0.6) (section 5)
+sounds/                 the four spoken clips the Sing-Along room plays when it has no videos
+LICENSES.txt            licences and credits for the parts this player is built from
+```
+
+To update the player, unpack the new files over the old ones: `game/`, `ruffle/` and `videos/` hold your own files and are not part of the update.
+Then reload the page with Ctrl+F5 (or Shift+Reload) so that the browser does not keep the old scripts. The players and settings that the game
+saved in the browser, and the nickname, stay as they are.
+
+## Status and limits
+
+* Tested in Chromium: start-up, the sign-in and lesson screens, Bink video with sound, MP3 voices and music, Smacker video (2.0.0),
+  activities in all three versions, the saving of players, printing (the print view), mouse, touch and the keyboard (Esc, space bar).
+  Not every activity of every lesson has been played through; the emulator runs the game's own code, so what works in one
+  activity usually works in the others, but gaps in rarely used Windows functions can still show up. If something stops, the red
+  panel has a **Copy details** button; keep the text, it names the function involved.
+* **Session check and nickname.** The cause of "Session Terminated" was found in the game's own code, and the stand-in's answer was tried on all
+  three game programs (2.0.0, 2.0.3, 2.0.6) with the game's check interval set to two seconds instead of four minutes: with the earlier stand-in
+  (which answered every request with nothing) the game's count of failed checks rose by one at each check and reached three, the number at which it
+  stops; with the present one the game made eleven checks in half a minute and the count stayed at zero. The nickname was checked where the
+  game keeps it: the string for the player's first name (the one that holds "Player" otherwise) holds the nickname in all three programs. The real
+  four-minute rhythm was run through once, on 2.0.3, for just over nine minutes of game time: the game made its three checks (right after it started and
+  after four and eight minutes; the third is where it used to stop), the count stayed at zero and the game kept running. The screens that show the name
+  were not all looked at.
+* **What the game remembers, Parents' Corner and Preferences.** Tried in Chromium with the real page and the real **2.0.3** game from start to end: a saved game was put
+  into the browser; the game asked where the player had got to and was told (episode 2); *Exit* → *Preferences* → any password → *Discovery Mode* → *Save Changes* was done
+  (the game wrote it into its `config.ini`, and the page kept that file with the garden's plant and its own lesson plan in it); the game was left through *Parents' Corner
+  (Exit)*; a second start brought it all back (the episode told again, Discovery Mode chosen in Preferences); **Clear saved data** took it away. **2.0.0:** the same steps in
+  the test program (not in the browser): the game came up at its second episode, Preferences opened with any password and *Save Changes* worked. **2.0.6:** in the
+  browser as far as the password and the Preferences window (any password is accepted, "PLAYER'S Preferences" opens), and the game's start and leave were seen in the test
+  program to ask and tell the stand-in server the episode; whether 2.0.6 then comes up at the right character on the next start was not looked at. **Not tried:** other browsers;
+  leaving the game with the parental lock on (the password is asked on the way out); what the print limits do; the garden's plant growing from visit to visit (only that its
+  counts are kept in `config.ini`). Not restored at all: each player's skill levels per game, favourites and the reports for parents (Disney's server kept them).
+* **Sing-Along videos.** The room's side was worked out from the game's own code (2.0.0 and 2.0.3 have the same code for the room, with the same server
+  addresses and file names) and tried in the real game with stand-in videos (2.0.3: 5, 9, 16 and 36 buttons, 2.0.0: 16): the game accepted the list and the pictures of the
+  buttons, drew them on the TV's screen (the grids fill the screen exactly), lit up the button under the mouse, showed its own
+  "Check Back Soon" button where a picture was missing, started its video window when a button was clicked (with the right video), kept asking
+  whether the video was over until it was told so, closed the window then and showed its buttons again. The page's side (the list from `videos/`,
+  the pictures made from a frame of each video, the player on the TV's screen with its controls, the game's mouse arrow drawn over the video (in the
+  right place wherever the mouse is, also in full screen, and out of the way when it is not near the TV), the end of a video, a video the browser
+  cannot play, adding by the button and by dropping, the sound of the empty room) was tried in headless Chromium with WebM clips. The arrow's
+  place was measured in the real game's pictures (2.0.0, 2.0.3 and 2.0.6: the game puts the arrow's picture level with the mouse and 2 pixels
+  above it, which is what the page does), the page was seen to read the arrow's picture from the real game's own files with the real game
+  running in it (all three versions), and a real game picture was put together with the page's arrow to see that the two meet at the TV's
+  edge. The one-arrow rule (see "The mouse arrow") was tried with the real 2.0.6 game in the real page: every picture the game sends says where
+  the mouse was for the game, and the game's arrow is found in that picture at exactly that place; with the game held up for six seconds
+  (its own arrow standing still beside the TV) and the mouse moved on, one whole arrow was seen at the game's place, the same pixels of the
+  arrow's picture on both sides of the TV's edge, and no second one at the mouse; with the arrow well inside the TV it followed the mouse at
+  once while the game was held up; and the old way (the page's arrow always at the mouse) was seen to give the two arrows of the complaint
+  (`tests/arrow_seam_page_test.js`, pictures in `work/out/seam/`). The button pictures (see "The button pictures") were watched with the real 2.0.0 and 2.0.3 games: the game takes the pictures that are there
+  when the TV is first opened, and a picture that arrives later shows the next time the TV is opened; the kept pictures (also after the page was opened again), a
+  changed file, **Clear saved data**, `?nokeep`, the new tries after a picture could not be made and the messages about it were tried in headless Chromium with WebM
+  clips (`tests/videos_page_test.js`). Once, on a real computer with two videos, the buttons were plain cards, and later they showed their pictures again by
+  themselves; the cause was not found (it was not seen here), so this version adds the new tries, the kept pictures and the messages that say what happened rather
+  than a fix for one known fault. **Not tried:** how it feels in Opera GX or Chrome on a real computer (the
+  tests ran in headless Chromium, on a computer with no mouse to wave about), MP4 (H.264) playback (that
+  Chromium has no H.264 decoder; Chrome, Edge and Opera have one), Firefox and Safari, videos of real size and length, and getting to the room by
+  clicking the TV in the Backyard with the mouse (in the tests the game was told to open the room itself). The game opens its window for a video
+  at the top left of its screen and never moves it, so the page puts the video where the TV's black screen is (161, 78, 480 × 360 in the game's
+  800 × 600 picture) instead. If a video does not appear where it should, `?debug` → **Copy log** shows what the page and the game did. A black strip: in the screenshots of the test
+  browser (headless Chromium, which draws without a graphics card) the video's player left black rows under the video box in this room; the page's player on Manny's TV avoids it (see the bullet about
+  Manny's Workshop), the room's cannot do the same because the game's mouse arrow, drawn over the video, reaches out of the box. It was not looked at on a real computer, and nobody has reported it.
+  Manny's Sing-Along TV (2.0.6) has its account in the bullet about Manny's Workshop.
+* **Flash.** The game's side (how it starts a movie and decides it is over) was worked out from the game
+  itself. With Ruffle 0.8.0 the twelve movies of 2.0.0 (Little Einsteins, Stanley) were played in the page with picture and sound,
+  and the real game was played through its first two movies: Ruffle starts a movie within a fraction of a second, **Skip movie**
+  ends it at once, a movie ends after its real length, the game carries on after it, and a hidden browser tab pauses the movie
+  together with the game. The movies in lessons that were not among the files tested here have not been tried. The *applications*
+  (see "Flash movies") were first tried with stand-ins made for the test (the real 2.0.3 game was made to run its own application loop on
+  a small Flash file; the loop never ended by itself, and **Back** ended it within a frame; the page loaded a second file out of the
+  game's data for it through Ruffle) and then with the real files of the packages of 2.0.3 (`tests/flash_real_app_test.js`): the game was made to run its own application
+  routine on Ray's day menu, Luna's night menu and the read-along title, and each came up in Ruffle with its pictures (six rhyme books each, the three
+  read-along characters) and found the files it loads: a click on the Humpty Dumpty book, the Twinkle Twinkle book and "Pooh Stories" each made it load the next file out of the
+  game's data (Twinkle played with its words), and **Back** ended the application and the game went on. Getting to these applications by clicking through the game's own
+  screens (the Backyard) was not played through here, nor were the other books and games they hold. Manny, the interactive application of 2.0.6, has a bullet of its own.
+* **Manny's Workshop (2.0.6).** Tried in headless Chromium, with the real page, the real 2.0.6 game (lesson LP0516) with the files of a real installation, and Ruffle 0.8.0
+  (`tests/manny_e2e_test.js` runs the main path; it takes about fifteen minutes because the game runs in real time). From the start: Esc until the lesson card, the badge, the
+  Workshop with its introduction. Every view that needs the changes above was opened (it had to be on the screen, not the grey picture) and left again with the toolbox icon:
+  Spanish Book, Craft Box, Painting Set, Toy Box, Read-alongs, Lullabies and the Sing-Along TV. **Printing:** in the Craft Box the Paper Letter Block went through the bridge as two
+  documents of 1,658,889 bytes (576 × 720 pixels each), the game logged "Image sucessfully printed" twice and the print view showed both pages; in the Painting Set a picture was drawn
+  and printed (the print view showed it, 521 × 364 pixels, with the red strokes that were drawn) and then kept ("Image sucessfully saved"; a `.tga` of 758,620 bytes, named after the date and time, like `userdata\PrintQueue\2026-11-27-21-39-44-00.tga`,
+  was among the files the browser keeps for the game). **Back** and **Esc** each ended Manny and the game showed its lesson card again (an Esc that ends an application is not passed on
+  to the game: without that the game also took it for a press of its own and left the lesson card), and Manny started a second time. Looked at by hand in the same set-up (one session with the
+  mouse): the Spanish Book (its contents, the Numbers and Colors pages turn, a tap on a colour shows its picture and its word, "Red / Rojo"), a Pooh Read-along ("Eeyore's Good Day":
+  the pages turn, with their text and pictures), a lullaby (Humpty Dumpty: the words light up), *Today's Job* (the day's job is shown), each of the eight games of the Toy Box (each one
+  started and drew its first scene; none was played to its end) and the four modes of the Painting Set (Finish my Face, Learn to Draw, Paint by Instrument, Hidden Picture). The sound was
+  not listened to in these tests (the browser that runs them has no loudspeakers). A *Fix-It* job was played to the end in an earlier test with Manny's own files in Ruffle, without the
+  game; that was not repeated for this version. For the printing the emulator's list of printers had to be
+  made right: the game asks for it (`EnumPrintersA`) and stopped with "Printing error: 19" when it found no printer. The printer is offered from the moment Manny connects to the
+  game's socket; before that the list is empty, as it was in the earlier versions, so the game starts exactly as it did. **Not tried:** Opera GX and other browsers (only Chromium);
+  a Ruffle other than 0.8.0; the browser's own print dialog behind **Print**; the Fix-It jobs of the other toys; long sessions. Ruffle writes harmless warnings for Manny on its
+  console ("Invalid call", "Duplicated frame label", "invalid main_data_begin"), and one error in the Heffalump game of the Toy Box ("GotoFrame failed: Invalid target"), after which the
+  game was still drawn.
+  **Your videos on the Sing-Along TV** were tried in the same set-up (`tests/manny_tv_test.js`, about six minutes: the real 2.0.6 game and real Ruffle, with four short WebM clips of plain colours, later seven
+  more added on the page) and, for the page's side alone, against a stand-in for the movie (`tests/manny_tv_page_test.js`, 79 checks). In the real game: the changed movie of the TV was
+  served and told the page that its scene was up; the TV's own eight buttons were gone and the page's buttons lay in their places (the first three buttons were measured on the screen as red,
+  green and blue, the places without a video showed the TV's plain screen); with the mouse over a button Manny's own arrow was out of sight (no orange pixels beside the button) and
+  with the mouse off the buttons the arrow was back at the mouse; a click played the blue clip on the TV's screen (its colour was measured, and the TV's plain screen under it, no black strip) to its end, and the
+  buttons came back; the TV's own **X** stopped a clip (Ruffle's log shows the movie asked for the address), so did **Esc**, and the Esc did nothing else (Manny and the TV stayed, and the page did not take
+  it for a skip); the Manny badge took the TV away with the buttons and a playing clip, the Workshop stayed, and the TV could be entered again; with eleven videos there were two pages and
+  the arrows turned them; **Back** with a clip playing ended Manny and the clip went with it, and Ruffle logged no errors apart from the two for `movies.ini`. Looked at by hand in the real game: a button
+  lights up under the mouse, a clip pauses with a hidden page, sound off and on, a resized window (the buttons stay on the TV's screen), and the note for an empty `videos/` folder on the TV with
+  the page asking for one of its spoken clips (nothing was heard: no loudspeakers). A black strip under the video that the test browser's compositor drew (about 23 pixels of the game's picture high, showing the page's
+  black ground through Ruffle's picture) was found and removed by clipping the player's box to the video. **Not tried for the TV:** Opera GX and other browsers, MP4 (the clips were WebM), touch, videos of
+  real size and length, and Disney's own streams (there are none left to try).
+* **Drawing speed.** The game puts every picture on the screen with one routine of its own that blends it in, pixel by pixel. The routine is
+  written for the processor's MMX instructions, which the emulator does not offer, so the game falls back to a plain per-pixel loop, and that
+  is slow when it is emulated. In scenes with big moving pictures (for example *Letter and Number Hide and Seek*, the first activity of every
+  2.0.6 lesson, or the cubby game of 2.0.0) that one routine used almost all of the emulator's time and the game lagged. The player now recognises
+  the routine by its code and does the same work as ordinary JavaScript, 14 to 17 times faster, with identical pixels. 2.0.3 and 2.0.6 have the
+  same build of the routine; 2.0.0 has an older, smaller one (it lacks one of the three 16-bit picture formats), which is recognised as well.
+  How it was checked: a test compares the native routine with the game's own on about 30,000 random pictures for each of the three versions
+  without a single difference, and the real running game was made to do every blend both ways: 63,600 calls in 2.0.0 and 29,541 in 2.0.6, again
+  without a difference. Pictures the routine does not handle (stretched ones, a few special blend modes, and in 2.0.0 the third picture format) still
+  go to the game's code. If the routine is not found (another build of the game), the game does the work itself, only slower. `?debug` shows the
+  number of native pictures; `?debug&hle=off` turns it off, which is how the following was measured.
+  **What it did for 2.0.0** (Chromium on a slow, shared test machine, not on a real computer; the cubby game, 40 seconds of clicking from one cubby
+  to the next, the same clicks each time, two runs each): without the native routine the game ran at 29 and 33 game ticks per second and about 28
+  pictures per second with the processor at 99 % and 88 %; with it, at about the game's own limit of 60 ticks and 50 or 51 pictures per second, with the
+  processor at 77 % and 78 %. **What it did not change:** the long pauses that the stall recorder lists, at the start of the game and when the
+  lesson changes (1.4 s and 0.8 to 0.9 s in those runs), last as long as before. The first is the game's opening animation, which takes the same time
+  whether its pictures are drawn slowly or fast (the game seems to count time, not pictures); with the native routine it draws 301 pictures in the
+  first six seconds instead of 30, so it looks smooth, but it is not shorter. (This text used to say that 2.0.0 has no such routine. That was wrong:
+  a log from a real computer, 2.0.0 in Opera GX, showed that the busiest code of the game was exactly that routine and that `?debug` said "0 blended
+  natively".) The page-side check is `tests/blend200_page_test.js`.
+  A second routine is done natively in the same way: the **colour-key copy** of one 16-bit picture into another, which the game uses for
+  pictures that have no alpha channel and just a colour that stands for "see-through". The drawers of the Bear lesson's cabinet game
+  (*Letter and Number Hide and Seek* in 2.0.3) are big, mostly see-through pictures drawn that way, and the emulated loop (seven or eight
+  instructions for every pixel, a large part of every frame in that scene) made every frame slow. All three versions (2.0.0, 2.0.3, 2.0.6)
+  have this routine; the native copy was checked against the game's own on 4,500 random copies without a difference.
+* **A moving mouse no longer holds the game up.** Every movement of the mouse used to be queued as a message of its own, and the game takes
+  one message per frame. In a scene whose frames take longer than the time between two mouse moves the queue never ran empty, and the player
+  only gave the game's picture to the page when the queue was empty: the screen froze while the mouse moved (about 12 seconds in the cabinet
+  game, until the game had worked through the old moves) and the game answered where the mouse had been, not where it is. As on Windows,
+  a mouse move now replaces one the game has not taken yet, and a game that finds a message at every look into its queue still comes back to
+  the player once per frame.
+* **The game's threads take turns.** The game has a few threads of its own (one keeps its network connection going in the background, for
+  example). Windows lets threads take turns; the emulator used to let a thread run until it waited for something, so a thread that
+  worked for a long time without waiting could keep the thread that draws the game from running at all (the picture would stand still
+  with the processor at 100 %). The emulator now hands the processor on after every slice of work, as Windows does. This turned out not to
+  be the cause of the stall in the Bear lesson's cabinet game (a stall report from that scene shows the thread that draws the game
+  working the whole time and the other thread waiting; the causes were the two items above), but the change stays: it is how Windows
+  behaves.
+* **Voices that were cut off (the "Today is ..." line).** Two different things could cut a voice short; the player now guards against both.
+  1. *A wrong number in the sound file itself.* This is what cut Bear's "Today is ..." voice (`Bear/P0100_BEA_TOD_01150.wav`). The header of the file
+     says that it holds 42,496 samples; its data holds 167,660 (7.6 s). The original game evidently does not go by that number, the earlier player
+     did, and so it stopped the voice after 1.9 s and the scene went on. (In the video of the cut the voice lasts about 1.9 s.) Now a number in the header that is more than one block away from what the data holds is not believed, all of the data is played, and
+     `?debug` says so with a `NOTE:` line (see below). The first log of a real run with v1.8 showed it: `voice ends: ... (7.6 s of 7.6 s)`.
+  2. *The player being held up while a voice plays.* When a scene starts, the game starts its voice and loads the scene's big pictures at the same
+     time. If the emulator is held up then (a garbage collection, a busy computer, a long piece of work), the game's clock goes on but its sound
+     cannot be made, and the earlier player skipped the sound that had been missed: a long voice lost its middle while the game still ended it on
+     time. In a test, a hold-up of 1.2 s just after a voice of 10 s began took about 2.2 s out of it. This is **not** what cut the Bear voice (the
+     log of the real run shows no hold-up while it played), but it can do the same to any long voice. Now a sound that the game plays through its
+     sound library goes on where it stopped: for the game a voice simply takes a little longer. The page's sound player does not throw a voice or a
+     sound effect away either (it keeps up to about 1.5 s of such sound waiting; if there is more, the oldest goes after all); music that repeats can
+     still be skipped over a hold-up. If the page itself was held up (the computer is busy with something else) a voice that arrives late is
+     played whole and runs up to 1 % fast until it has caught up, which cannot be heard, so it can be a little behind the picture for a while. The
+     sound of a video clip still skips together with its pictures.
+     This was tried in Chromium with the real player and the real game (2.0.6), with a stand-in for the voice (a ten-second tone file with a click
+     every second and an end marker): a hold-up of 1.2 s put in just after the voice began made the earlier player lose 2.2 s of it, the present
+     one played all of it, with a pause as long as the hold-up; a page held up for 0.6 s cost the earlier player 0.56 s of it, the present one
+     nothing.
+  If a voice is still cut, `?debug` says what happened to it.
+* **Sound notes in the log (`?debug`).** For every voice of 1.5 s or more the log has lines starting with `[sound]`: `voice starts: <file> (<seconds> s)`,
+  `voice ends: <file> (<heard> s of <total> s)`, `voice stopped by the game: ...` when the game itself ended it early, `the game was busy for <N> ms while
+  "<file>" played: the sound waited and went on, nothing was skipped` (hold-ups of 150 ms and more), and `NOTE:` lines when a sound file is shorter than
+  its header says ("is cut short") or its header counts the samples wrongly ("says that it holds N samples, but its data holds M": the player then plays all of the data). **Copy log** has a section of its own for them
+  (the end of the log used to push them out), and the line of figures at the top shows how long the sound fell behind the game in all.
+* **Stall recorder (`?debug`).** When the game goes on for 0.4 s or more without coming back to its message loop (no "game tick"), the page
+  gets no new pictures from it. In `?debug` the player then notes what the game is doing: which blocks of its code run most often (counted on one slice of work in three, so as to slow the game down less), what
+  called them, which Windows / DirectDraw / sound / video functions it calls and how often, which thread works, and what the drawing routine does.
+  One short report per stall is written to the log (lines starting with `[stall]`; stalls shorter than 0.7 s are not reported), and a long
+  stall is reported again every five seconds. **Copy log** puts the statistics, these notes and the end of the log on the clipboard, which is
+  what to send with a bug report. While the game works for a long time without a tick the page keeps showing the pictures the game has
+  drawn so far (about 30 a second) and keeps the sound going.
+* A short pause when a new scene starts (about one to one and a half seconds for the big ones such as Hide and Seek, on the test machine) is the
+  browser's JavaScript engine meeting the game's code for the first time and unpacking the scene's large pictures. It happens once per scene and
+  visit.
+* Text drawn through Windows uses the browser's Arial / Liberation Sans, so letter shapes can differ slightly from Windows.
+* Only Chromium (Chrome / Edge) was tried. The page uses only standard web features (Web Workers, OffscreenCanvas,
+  AudioWorklet, IndexedDB) that current Firefox and Safari (16.4 or newer) also provide; if something misbehaves there, try
+  Chrome or Edge first.
+* **The 2.0.6 "Today is" display (the postcard).** After Mickey's hello video the game shows a postcard: its "Today is" display, which in the original carries the
+  day's drawing and a voice that says the day. The game's own table of days (`Theme\DayTable.lua`) takes only the days for which both the drawing and the voice are
+  there. The files tested here hold 20 of its 167 drawings and none of the voices, so the table comes out empty: the postcard stays blank for about two seconds and the
+  lesson's first activity follows. That is the game's own code working with the files it was given, not something the player does (watched in the real page, with
+  the real game: hello video, blank postcard, lesson). Voices alone would not be enough: in a test in which silent voices were invented for the 20 drawings, the game went on to
+  ask for a background picture for this scene, `Theme\Bg_TodayIs.tga`, which is in none of the packs either, and stopped with its "Technical Error" screen. So for a day's
+  drawing to appear, its voice, its drawing and that background picture would all have to be among the files.
+
+## Troubleshooting
+
+| Message | What to check |
+| --- | --- |
+| "No game files were found" | the file names in `game/` and `files.json`, and that the folder is reachable at that address |
+| "The files found do not make up a complete game yet" | a version needs an installer or a zip with `DisneyPO.exe`; the notes on the card say what is missing |
+| "The web server does not support HTTP Range requests" | use `serve.py`, or enable range requests / turn off compression on your server |
+| "… is compressed inside … and cannot be read in place" | a zip or installer inside a big zip is compressed; put it next to the big zip as its own file |
+| Red panel with "error in the emulator" | press **Copy details** and keep the text |
+| "The game stopped because one of its files could not be read", or the notice "The game cannot read … right now" | the web server that holds the game files (`serve.py`) did not answer, answered "busy", or sent only part of a file. The player asks again for about 76 seconds and the game goes on by itself when the server is back; if the server's window was closed, start it again. After the red panel: **Try again** (the players the game saved stay in this browser). If it keeps happening: open the page with `?debug`, reproduce it, press **Copy log** (the `[files]` lines say which file and when), and copy what the server's window printed |
+| "Session Terminated – Please log out and try again" about eight minutes after the game started | older files of this player did not answer the game's session check; copy the new player files over the old ones (your `game/` and `ruffle/` folders stay as they are) and reload with Ctrl+F5 |
+| The nickname is not shown | it is given to the game when the game starts: set it on the start card before pressing **Start**; only some screens show a name (for example "Good Job, …!") |
+| A movie part is skipped | see "Flash movies" above: Ruffle must be in `ruffle/` |
+| The Sing-Along room (the TV in the Backyard) has no videos | put video files in `videos/` and reload with Ctrl+F5; the start card says how many the page found; see section 5. With none, the room only plays a spoken clip |
+| A button in the Sing-Along room is a plain card with just the video's name, not a frame of the video | the picture was not there when the TV was opened (it was still being made, or the browser could not make it). **Leave the TV and open it again**: the game asks again then. The start card (under **Videos…**) and a message on the screen say whether pictures are still being made or which video had none and why; `?debug` → **Copy log** has the lines `[videos] pictures for list …` and `[videos] no picture from "…"`. If it keeps happening for one video, convert that video to MP4 (H.264 + AAC) |
+| A button in the Sing-Along room says "Check Back Soon" | the game did not get a picture for that button (it uses its own plain one); the video still plays when it is clicked. Copy the log (`?debug`) if it happens for every button |
+| Over a Sing-Along video the arrow is the browser's plain one, not the game's orange one | the page could not read the game's arrow picture (`Common/arrow.tga`); open the page with `?debug`, play a video and press **Copy log**: the "Sing-Along room" section says why |
+| The arrow seems to lag behind the mouse, near the edge of a Sing-Along video or anywhere else in the game | the game's own arrow is always a little late (see "The mouse arrow" in section 5 and "Sound and picture in step"); over the middle of a video the page's arrow follows the mouse at once. If it is late everywhere, `?debug` shows the picture delay and **Sync** lets you move it to the left; a slow computer makes it worse |
+| "This browser cannot play …" on the TV | the file's video or sound is of a kind the browser does not know; convert it to MP4 (H.264 + AAC), see section 5 |
+| A Flash screen stays white, or **Skip movie** / **Back** does nothing | open the page with `?debug`, reproduce it, press **Copy log**; the "Flash movies" section says what happened (see "Flash movies"); a white movie may also draw correctly with `?flashrenderer=canvas` |
+| Manny (2.0.6) shows a plain grey screen, or a view of it never appears | open the page with `?debug`, start Manny again and press **Copy log**: the "Flash movies" section says for each file of Manny whether it was served "patched for Ruffle". A file without that note was not recognised (the changes are made only to the exact files that were tested), or your Ruffle lacks the option `urlRewriteRules`. `?nomannyfix` shows what Ruffle does with the original files; send the log |
+| Manny's printing, or its safe (Craft Box, Painting Set), does nothing | `?debug` → **Copy log**, Flash section: the line `socket 1: Flash opens a connection to the game` must be there; `refused` after it means that the game was not listening, no such line at all means that Ruffle did not open the connection (a Ruffle without the option `socketProxy`). `?debug&tracenet` adds the game's own `accept` and `recv` calls to the log |
+| Manny's Sing-Along TV (2.0.6) shows no buttons, or no videos, or its own buttons | put video files in `videos/` and reload with Ctrl+F5 (the start card says how many the page found; with none the TV shows a note and plays a spoken clip). Then `?debug` → **Copy log**: the line `[videos] Manny's TV is up: N video(s) on P page(s)` must be there when the TV is on the screen. If it is not, the TV's movie was not changed (it is changed only when it is served "patched for Ruffle", see the row above; `?nomannyfix` turns it off; a Ruffle without the option `urlRewriteRules` cannot serve it) and it asks Disney's server for its songs, which is gone. If the line is there and the buttons are not, the log's `[videos] Manny's TV …` lines say what happened (up, plays, stopped, gone) |
+| Over the buttons and the video of Manny's Sing-Along TV the arrow is the browser's, not Manny's orange one | that is meant: Manny draws its arrow inside its movie, under everything of the page, so the page moves Manny's own arrow out of sight while the mouse is over a button or the video and the browser's arrow shows; Manny's arrow is back when the mouse leaves |
+| A voice (for example the "Today is ..." line) is cut off or has a gap | open the page with `?debug`, play to that point and press **Copy log**; the "sound" section says what happened to that voice: `voice ends: ... (X s of Y s)` with X below Y means that the game ended it early (a line `voice stopped by the game` is there too) or that the file is shorter than it should be (a `NOTE:` line); `the game was busy for N ms` lines mean that the computer was held up while it played (the voice waits and goes on, it is not cut). Keep that section for a report |
+| No sound | check the **Sound** button and the system volume (browsers only allow sound after a click, which is what **Start** is for) |
+| Sound is late or early compared with the picture | open **Sync** and move the slider |
