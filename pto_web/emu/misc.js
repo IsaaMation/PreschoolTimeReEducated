@@ -62,19 +62,49 @@
     }
     m.def(WS, 'OpenPrinterA', 3, (m, name, pOut) => { if (pOut) m.wr32(pOut, m.newHandle({ type: 'printer' })); return 1; });
     m.def(WS, 'ClosePrinter', 1, () => 1);
+    // The printer's description as the PRINTER_INFO_n structures of the levels that programs ask for: 1, 2 (with its DEVMODE), 4 and 5.
+    // Each gives the structure, then the strings (as Windows does: everything is inside the caller's buffer).
+    const INFO = {
+      1: { size: 16, strs: [[8, PRINTER], [4, PRINTER + ',Browser Printer Driver,'], [12, '']], fill: b => { m.wr32(b, 0x8); } },            // PRINTER_INFO_1A: Flags, pDescription, pName, pComment
+      2: { size: 84, extra: DEVMODE_SIZE, strs: [[4, PRINTER], [12, 'BROWSER:'], [16, 'Browser Printer Driver'], [36, 'WinPrint'], [40, 'RAW']],
+        fill: (b, q) => { devMode(q); m.wr32(b + 28, q); m.wr32(b + 52, 0x40); m.wr32(b + 56, 1); m.wr32(b + 60, 1); } },                // pDevMode, Attributes: local, Priority, DefaultPriority
+      4: { size: 12, strs: [[0, PRINTER]], fill: b => { m.wr32(b + 8, 0x40); } },                                                      // PRINTER_INFO_4A: pPrinterName, pServerName, Attributes
+      5: { size: 20, strs: [[0, PRINTER], [4, 'BROWSER:']], fill: b => { m.wr32(b + 8, 0x40); m.wr32(b + 12, 15000); m.wr32(b + 16, 90000); } },     // PRINTER_INFO_5A
+    };
+    /** writes the printer's PRINTER_INFO_<level> into buf (cb bytes); returns the size needed (0: no such level) and whether it fitted */
+    function printerInfo(level, buf, cb) {
+      const I = INFO[level]; if (!I) return { need: 0, ok: false };
+      const need = I.size + (I.extra || 0) + I.strs.reduce((a, e) => a + e[1].length + 1, 0);
+      if (!buf || cb < need) return { need, ok: false };
+      for (let i = 0; i < I.size; i++) m.wr8(buf + i, 0);
+      let q = buf + I.size;
+      const dm = q; q += I.extra || 0;
+      for (const [off, str] of I.strs) { putStr(q, str); m.wr32(buf + off, q); q += str.length + 1; }
+      I.fill(buf, dm);
+      return { need, ok: true };
+    }
     m.def(WS, 'GetPrinterA', 5, (m, h, level, buf, cb, pNeeded) => {
-      // PRINTER_INFO_2A (84 bytes) followed by the DEVMODE and the strings; no other level is offered
-      if (level !== 2) { m.lastError = 124; return 0; }                      // ERROR_INVALID_LEVEL
-      const fixed = 84, strs = [[4, PRINTER], [12, 'BROWSER:'], [16, 'Browser Printer Driver'], [36, 'WinPrint'], [40, 'RAW']];
-      const need = fixed + DEVMODE_SIZE + strs.reduce((a, e) => a + e[1].length + 1, 0);
-      if (pNeeded) m.wr32(pNeeded, need);
-      if (!buf || cb < need) { m.lastError = 122; return 0; }                // ERROR_INSUFFICIENT_BUFFER
-      for (let i = 0; i < fixed; i++) m.wr8(buf + i, 0);
-      let q = buf + fixed;
-      devMode(q); m.wr32(buf + 28, q); q += DEVMODE_SIZE;                    // pDevMode
-      for (const [off, str] of strs) { putStr(q, str); m.wr32(buf + off, q); q += str.length + 1; }
-      m.wr32(buf + 52, 0x40);                                                // Attributes: local printer
-      m.wr32(buf + 56, 1); m.wr32(buf + 60, 1);                              // Priority, DefaultPriority
+      if (level !== 2) { m.lastError = 124; return 0; }                      // ERROR_INVALID_LEVEL (only level 2 is offered; the others are for enumerating)
+      const r = printerInfo(level, buf, cb);
+      if (pNeeded) m.wr32(pNeeded, r.need);
+      if (!r.ok) { m.lastError = 122; return 0; }                            // ERROR_INSUFFICIENT_BUFFER
+      return 1;
+    });
+    // EnumPrintersA(Flags, Name, Level, pPrinterEnum, cbBuf, pcbNeeded, pcReturned): the one printer is a local printer (PRINTER_ENUM_LOCAL 2, ..._DEFAULT 1, ..._NAME 8 with no
+    // server name); it is not a connection (4), a shared (0x20), a remote (0x10) or a network (0x40) one.  Like the real call it says how much room it needs when the buffer is too small.
+    // The game also lists the printers while it starts up.  To keep that start exactly as it was in the earlier versions (where the list was always empty), the printer is offered only
+    // once the page's Flash content (Manny) has connected to the game's socket (m.printerShown, set by m.net.connectLocal in ws2_32.js): before that the list is empty and the call
+    // succeeds, as it always did.
+    m.def(WS, 'EnumPrintersA', 7, (m, flags, name, level, buf, cb, pNeeded, pRet) => {
+      if (pNeeded) m.wr32(pNeeded, 0); if (pRet) m.wr32(pRet, 0);
+      if (!m.printerShown) return 1;                                         // no printers (yet)
+      if (!INFO[level]) { m.lastError = 124; return 0; }                     // ERROR_INVALID_LEVEL
+      const listed = (flags & 0xb) !== 0 && !(name && m.cstr(name));
+      if (!listed) return 1;                                                 // no printers of that kind
+      const r = printerInfo(level, buf, cb);
+      if (pNeeded) m.wr32(pNeeded, r.need);
+      if (!r.ok) { m.lastError = 122; return 0; }                            // ERROR_INSUFFICIENT_BUFFER
+      if (pRet) m.wr32(pRet, 1);
       return 1;
     });
     m.def(WS, 'SetPrinterA', 4, () => { m.lastError = 5; return 0; });

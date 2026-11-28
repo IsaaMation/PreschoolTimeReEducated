@@ -274,7 +274,7 @@
       if (doc.pages.length && m.opts.onPrint) m.opts.onPrint(doc);
       return 1;
     });
-    m.def('WINSPOOL.DRV', 'EnumPrintersA', 7, (m, f, name, lvl, buf, size, pNeeded, pRet) => { if (pNeeded) m.wr32(pNeeded, 0); if (pRet) m.wr32(pRet, 0); return 1; });
+    // (EnumPrintersA, with the printer's description, is in misc.js)
     m.def('comdlg32.dll', 'GetOpenFileNameA', 1, () => 0);
     m.def('comdlg32.dll', 'GetSaveFileNameA', 1, () => 0);
   }

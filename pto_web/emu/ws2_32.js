@@ -34,6 +34,7 @@
     /** host side: connect a client endpoint to a listening game socket */
     net.connectLocal = function (port) {
       const l = net.listeners.get(port); if (!l) return null;
+      m.printerShown = true;                                                 // Flash content is talking to the game: it may want to print (see EnumPrintersA in misc.js)
       const server = newSock('stream'), client = newSock('stream');
       pair(server, client);
       l.backlog.push(server);

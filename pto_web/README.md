@@ -104,8 +104,34 @@ drawn without the graphics card) or `?flashrenderer=webgl`, `?flashrenderer=wgpu
 that one instead of its own choice, for example `http://localhost:8000/?debug&flashrenderer=canvas`. The log says which one Ruffle
 ended up with.
 
-The interactive Flash applications that 2.0.6 starts through the control's own calls (they talk to the game while they run, and the game
-asks them for a result) are not connected yet. They are skipped in both cases, and the page says so.
+**Manny's Workshop (2.0.6).** The lesson card of 2.0.6 has a badge with Manny on it (to reach the card without waiting for the introduction, keep pressing **Esc**
+until it shows up). The badge starts the largest Flash application of the game, an interactive toy room made with Adobe Flex: the Workshop, where the Read-alongs,
+the Spanish Book, the Lullabies, the Toy Box (eight games), the Craft Box, the Painting Set, the Sing-Along TV and *Today's Job* are. It is an *application* in the sense
+above (the game waits for its **Back** button, which the page shows; **Esc** does the same). The page does four more things for it. Two of them need an option of Ruffle's
+(`urlRewriteRules` and `socketProxy`; Ruffle 0.8.0 has both):
+
+* **Its files.** Manny was written to run from the game's folder and asks for its files by `file:///…` addresses. The page has Ruffle turn those into `flashfiles/…`
+  addresses and serves them from the game's data, as for the other applications.
+* **Small changes to nine of its movies.** Ruffle 0.8.0 cannot start nine of Manny's movies as they are. Most of them load their artwork as a small embedded movie and build
+  their scene one frame later; Ruffle does not have the artwork's pieces ready by then (it depends on how busy the computer is), so they stop with a "TypeError #1009" and
+  show a plain grey screen. And in the Workshop the seven tool objects take each other's mouse clicks (Ruffle finds the button under the mouse by the picture the button
+  shows, Flash by the button's hit shape). While the page serves these movies it changes them in a few places: a view whose scene is not there yet tries again a frame later,
+  and each tool takes the mouse only inside its own box. The changes are listed at the top of `mannyfix.js`; they are made only to the exact files that were tested (the page
+  checks the length and the CRC-32 of each file first) and any other file is served as it is. `?nomannyfix` in the address turns them off, to see what Ruffle does with the originals.
+* **Printing and keeping a picture.** The Craft Box (print a template) and the Painting Set (print; or the safe, which keeps the picture for the scrapbook) send the picture
+  over a network connection to the game itself (to `localhost:12345`, where the game listens for its Flash applications). A web page cannot make such a connection, so
+  Ruffle is given a stand-in for it (its option `socketProxy`) that never leaves the page: what Manny sends goes into the game's own listening socket, and what the game
+  answers goes back. The game then does what it did on Windows: it prints (the page shows its print window, see "Using it") or writes the picture into its saved files
+  (a `.tga` picture file named after the date and the time, in its `userdata\PrintQueue` folder, which the page keeps in the browser with the other saved files). This needs a game
+  that listens on port 12345, which is the case for 2.0.6; where nothing listens, the connection is refused and nothing is sent.
+* **No internet.** Manny asks Disney's server for its list of Sing-Along videos (`movies.ini`). That server is gone, so the page answers "not found" at once instead of
+  sending the request out (open the page with `?flashnet` to let Flash applications use the internet). Ruffle writes two errors about this on its console (`movies.ini` and
+  `onPtoConfigFailed`); they are expected.
+
+**What does not work in Manny.** The Sing-Along TV shows its songs with their pictures, but the songs cannot be played: they were streams from Disney's servers, which are gone, and a browser
+cannot play such streams anyway (the screen stays dark; the **X** on the TV goes back to the list). Manny's scrapbook is not reachable in 2.0.6 (its screen is not one of the views that the Workshop
+opens), so a picture that was kept cannot be looked at again; the file is saved, though. To get a Painting Set drawing out as a picture file, use its printer button and then
+**Save picture** in the print view (a PNG).
 
 ## 5. Videos for the Sing-Along room (optional)
 
@@ -187,7 +213,9 @@ More about it:
   On phones and tablets buttons for **Esc** and **Space** appear below the picture, next to a **Keyboard** button that brings up the
   on-screen keyboard.
 * The game's **Print** button opens a print view on the page: **Print** sends the picture to your printer (or "Save as PDF"),
-  **Save picture** downloads it as a PNG, **Close** (or Esc) returns to the game.
+  **Save picture** downloads it as a PNG, **Close** (or Esc) returns to the game. Manny's Craft Box prints a template as two pictures, one after the other: both stay in
+  the print view (**Print** puts each on a paper page of its own) and **Save picture** downloads one file for each (`preschool-time-picture-1.png`, `…-2.png`; your browser
+  may ask whether the page may download several files).
 * **Full screen**, **Sound** and **Sync** buttons sit below the picture. The game pauses while the tab is hidden.
 * **Sound and picture in step.** Sound needs a moment to reach the speakers; the page measures that delay and holds the picture
   back by the same amount, so a picture and its sound arrive together. **Sync** opens a slider for the cases the browser cannot
@@ -203,6 +231,7 @@ More about it:
   and *yes*), and the stand-in for Disney's server hands that number back when the game starts, so the next character comes up where the player left off
   instead of the first one again. Closing the tab without leaving through the game's Exit does not tell the game's server anything (the same as in the original),
   so the episode is only kept when the game was left the proper way. The Preferences and the plant are kept as the game writes them, whichever way it is left.
+  A picture that Manny's Painting Set kept with its safe (a picture file of about 0.75 MB, section 4) is kept as well, one more file for each picture.
   **Clear saved data** removes all of it. What the original also kept on Disney's server (each player's skill levels per game, favourites, the reports for
   parents) is **not** restored: that server is gone, and the game starts those afresh.
 * **Parents' Corner and Preferences.** The Exit button's menu has *Parents' Corner (Exit)*, *Keep Playing* and *Preferences*. Preferences ask for the grown-up's
@@ -224,7 +253,8 @@ More about it:
   `?ruffle=off` (see above), `?debug` (frame rate, CPU use, download counters, the picture delay, how many pictures the native drawing routine did, the
   game's own log and the key messages it gets, a **Copy log** button, and the stall recorder described below; `?debug&hle=off` turns the native drawing routine off,
   `?debug&threads=coop` makes the game's threads wait for each other again instead of taking turns, both to compare), `?fixeddate=2009-11-15` (the date the game sees;
-  by default it sees today's date), `?avoffset=MS` (see above).
+  by default it sees today's date), `?avoffset=MS` (see above), `?nomannyfix` and `?flashnet` (see "Manny's Workshop" in section 4), `?debug&tracenet` (puts the game's
+  network calls, such as the connections of Flash applications, into the log).
 * Slow downloads and short hold-ups of the computer do not disturb the game: its clock stands still while the page waits for a
   file, and a hold-up is taken off its clock, so animations and video clips do not race to catch up. A voice or a sound effect is
   never cut by a hold-up: if the computer is held up while one plays, it waits and goes on where it stopped (see "Voices that were cut off" below).
@@ -241,6 +271,7 @@ More about it:
 index.html, main.js     the page: screen, mouse/keyboard, sound start button, version, lesson and nickname choice, Flash layer, print view
 worker.js               runs the emulator in a Web Worker, reads the game files with Range requests, saves players
 videos.js               the Sing-Along room's videos on the page's side: the list, the button pictures (made, and kept in the browser), the player on the TV, the sound of the empty room
+mannyfix.js             the small changes that let Manny's Flash movies (2.0.6) start under Ruffle: lists of changes for known files, no Flash code of its own (section 4)
 audio-worklet.js        plays the game's sound through Web Audio (short fixed queue that never throws a voice away, measures how late the sound is)
 emu/*.js                the emulator: x86 compiler (to JavaScript), Windows / Miles / Bink / Smacker / MP3 / network / printer / Flash-control
                         stand-ins, server.js (the stand-in for Disney's server), the readers for zips and Wise installers, and hle.js
@@ -308,16 +339,36 @@ saved in the browser, and the nickname, stay as they are.
   clicking the TV in the Backyard with the mouse (in the tests the game was told to open the room itself). The game opens its window for a video
   at the top left of its screen and never moves it, so the page puts the video where the TV's black screen is (161, 78, 480 × 360 in the game's
   800 × 600 picture) instead. If a video does not appear where it should, `?debug` → **Copy log** shows what the page and the game did.
-* **Flash** is the part tested least. The game's side (how it starts a movie and decides it is over) was worked out from the game
+* **Flash.** The game's side (how it starts a movie and decides it is over) was worked out from the game
   itself. With Ruffle 0.8.0 the twelve movies of 2.0.0 (Little Einsteins, Stanley) were played in the page with picture and sound,
   and the real game was played through its first two movies: Ruffle starts a movie within a fraction of a second, **Skip movie**
   ends it at once, a movie ends after its real length, the game carries on after it, and a hidden browser tab pauses the movie
   together with the game. The movies in lessons that were not among the files tested here have not been tried. The *applications*
-  (see "Flash movies") were tried only with stand-ins made for the test: the real 2.0.3 game was made to run its own application loop on
-  a small Flash file, that loop never ended by itself, and **Back** ended it within a frame; the page loaded a second file out of the
-  game's data for it through Ruffle. The real applications' files (the day / night menus, the read-along books) were not available
-  here, so how Ruffle copes with them is not known; the Flash section of **Copy log** is there for that. The interactive Flash
-  applications of 2.0.6 are not connected yet: they are skipped.
+  (see "Flash movies") were first tried with stand-ins made for the test (the real 2.0.3 game was made to run its own application loop on
+  a small Flash file; the loop never ended by itself, and **Back** ended it within a frame; the page loaded a second file out of the
+  game's data for it through Ruffle) and then with the real files of the packages of 2.0.3 (`tests/flash_real_app_test.js`): the game was made to run its own application
+  routine on Ray's day menu, Luna's night menu and the read-along title, and each came up in Ruffle with its pictures (six rhyme books each, the three
+  read-along characters) and found the files it loads: a click on the Humpty Dumpty book, the Twinkle Twinkle book and "Pooh Stories" each made it load the next file out of the
+  game's data (Twinkle played with its words), and **Back** ended the application and the game went on. Getting to these applications by clicking through the game's own
+  screens (the Backyard) was not played through here, nor were the other books and games they hold. Manny, the interactive application of 2.0.6, has a bullet of its own.
+* **Manny's Workshop (2.0.6).** Tried in headless Chromium, with the real page, the real 2.0.6 game (lesson LP0516) with the files of a real installation, and Ruffle 0.8.0
+  (`tests/manny_e2e_test.js` runs the main path; it takes about fifteen minutes because the game runs in real time). From the start: Esc until the lesson card, the badge, the
+  Workshop with its introduction. Every view that needs the changes above was opened (it had to be on the screen, not the grey picture) and left again with the toolbox icon:
+  Spanish Book, Craft Box, Painting Set, Toy Box, Read-alongs, Lullabies and the Sing-Along TV. **Printing:** in the Craft Box the Paper Letter Block went through the bridge as two
+  documents of 1,658,889 bytes (576 × 720 pixels each), the game logged "Image sucessfully printed" twice and the print view showed both pages; in the Painting Set a picture was drawn
+  and printed (the print view showed it, 521 × 364 pixels, with the red strokes that were drawn) and then kept ("Image sucessfully saved"; a `.tga` of 758,620 bytes, named after the date and time, like `userdata\PrintQueue\2026-11-27-21-39-44-00.tga`,
+  was among the files the browser keeps for the game). **Back** and **Esc** each ended Manny and the game showed its lesson card again (an Esc that ends an application is not passed on
+  to the game: without that the game also took it for a press of its own and left the lesson card), and Manny started a second time. Looked at by hand in the same set-up (one session with the
+  mouse): the Spanish Book (its contents, the Numbers and Colors pages turn, a tap on a colour shows its picture and its word, "Red / Rojo"), a Pooh Read-along ("Eeyore's Good Day":
+  the pages turn, with their text and pictures), a lullaby (Humpty Dumpty: the words light up), *Today's Job* (the day's job is shown), each of the eight games of the Toy Box (each one
+  started and drew its first scene; none was played to its end) and the four modes of the Painting Set (Finish my Face, Learn to Draw, Paint by Instrument, Hidden Picture). The sound was
+  not listened to in these tests (the browser that runs them has no loudspeakers). A *Fix-It* job was played to the end in an earlier test with Manny's own files in Ruffle, without the
+  game; that was not repeated for this version. For the printing the emulator's list of printers had to be
+  made right: the game asks for it (`EnumPrintersA`) and stopped with "Printing error: 19" when it found no printer. The printer is offered from the moment Manny connects to the
+  game's socket; before that the list is empty, as it was in the earlier versions, so the game starts exactly as it did. **Not tried:** Opera GX and other browsers (only Chromium);
+  a Ruffle other than 0.8.0; the browser's own print dialog behind **Print**; the Fix-It jobs of the other toys; long sessions. Ruffle writes harmless warnings for Manny on its
+  console ("Invalid call", "Duplicated frame label", "invalid main_data_begin"), and one error in the Heffalump game of the Toy Box ("GotoFrame failed: Invalid target"), after which the
+  game was still drawn.
 * **Drawing speed.** The game puts every picture on the screen with one routine of its own that blends it in, pixel by pixel. The routine is
   written for the processor's MMX instructions, which the emulator does not offer, so the game falls back to a plain per-pixel loop, and that
   is slow when it is emulated. In scenes with big moving pictures (for example *Letter and Number Hide and Seek*, the first activity of every
@@ -410,6 +461,8 @@ saved in the browser, and the nickname, stay as they are.
 | The arrow seems to lag behind the mouse, near the edge of a Sing-Along video or anywhere else in the game | the game's own arrow is always a little late (see "The mouse arrow" in section 5 and "Sound and picture in step"); over the middle of a video the page's arrow follows the mouse at once. If it is late everywhere, `?debug` shows the picture delay and **Sync** lets you move it to the left; a slow computer makes it worse |
 | "This browser cannot play …" on the TV | the file's video or sound is of a kind the browser does not know; convert it to MP4 (H.264 + AAC), see section 5 |
 | A Flash screen stays white, or **Skip movie** / **Back** does nothing | open the page with `?debug`, reproduce it, press **Copy log**; the "Flash movies" section says what happened (see "Flash movies"); a white movie may also draw correctly with `?flashrenderer=canvas` |
+| Manny (2.0.6) shows a plain grey screen, or a view of it never appears | open the page with `?debug`, start Manny again and press **Copy log**: the "Flash movies" section says for each file of Manny whether it was served "patched for Ruffle". A file without that note was not recognised (the changes are made only to the exact files that were tested), or your Ruffle lacks the option `urlRewriteRules`. `?nomannyfix` shows what Ruffle does with the original files; send the log |
+| Manny's printing, or its safe (Craft Box, Painting Set), does nothing | `?debug` → **Copy log**, Flash section: the line `socket 1: Flash opens a connection to the game` must be there; `refused` after it means that the game was not listening, no such line at all means that Ruffle did not open the connection (a Ruffle without the option `socketProxy`). `?debug&tracenet` adds the game's own `accept` and `recv` calls to the log |
 | A voice (for example the "Today is ..." line) is cut off or has a gap | open the page with `?debug`, play to that point and press **Copy log**; the "sound" section says what happened to that voice: `voice ends: ... (X s of Y s)` with X below Y means that the game ended it early (a line `voice stopped by the game` is there too) or that the file is shorter than it should be (a `NOTE:` line); `the game was busy for N ms` lines mean that the computer was held up while it played (the voice waits and goes on, it is not cut). Keep that section for a report |
 | No sound | check the **Sound** button and the system volume (browsers only allow sound after a click, which is what **Start** is for) |
 | Sound is late or early compared with the picture | open **Sync** and move the slider |

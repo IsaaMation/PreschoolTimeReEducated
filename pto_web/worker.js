@@ -379,7 +379,7 @@ async function boot(c) {
   status('Starting…');
   const local = Date.now() - new Date().getTimezoneOffset() * 60000;      // the game reads the date and time as UTC fields: give it the player's local time
   m = newMachine({
-    vfs, log, stdout: log, debugOut: true, soundLog: !!c.debug, traceKeys: !!c.debug, noHle: !!c.nohle, fixedWallClock: c.fixedDate ? Date.parse(c.fixedDate + 'T12:00:00Z') : local,
+    vfs, log, stdout: log, debugOut: true, soundLog: !!c.debug, traceKeys: !!c.debug, noHle: !!c.nohle, traceNet: !!c.traceNet, traceFiles: !!c.traceFiles, fixedWallClock: c.fixedDate ? Date.parse(c.fixedDate + 'T12:00:00Z') : local,
     onPrint: doc => {                                  // the game's Print button: hand the page(s) to the web page
       const pages = doc.pages.map(p => ({ w: p.w, h: p.h, buf: p.rgba.buffer }));
       post('print', { name: doc.name, pages }, pages.map(p => p.buf));
@@ -467,6 +467,44 @@ function applyVideos(d) {
   if (cfg && cfg.debug) log('[server] videos for the Sing-Along room: ' + (d.thumb !== undefined ? 'a better picture for button ' + d.thumb + ' of list ' + d.gen : 'list ' + d.gen + ' with ' + d.count));
 }
 
+/* ------------------------------------------------------------------------------------------------ Flash's connections to the game
+ * Manny's Craft Box and Painting Set send what is to be printed or kept to the game through a socket on "localhost:12345" (the game listens there for its Flash applications).
+ * The page has Flash's end of such a connection (BridgeSocket in main.js); here it is put on the game's own listening socket, and what the game answers goes back. */
+const socks = new Map();            // id -> the game's end of the connection (see ws2_32.js: net.connectLocal)
+let sockTimer = 0;
+const sockPoll = () => {
+  for (const [id, ep] of socks) {
+    try {
+      for (let b; (b = ep.recv());) { const u = b.byteOffset || b.byteLength !== b.buffer.byteLength ? b.slice() : b; post('sockData', { id, bytes: u.buffer }, [u.buffer]); }
+      if (ep.closed) { socks.delete(id); post('sockState', { id, state: 'closed' }); }
+    } catch (e) { socks.delete(id); post('sockState', { id, state: 'closed' }); }
+  }
+  if (!socks.size && sockTimer) { clearInterval(sockTimer); sockTimer = 0; }
+};
+function sockOpen(d) {
+  let ep = null, why = '';
+  try {
+    if (!m || !m.net || !m.net.connectLocal) why = 'the game is not running';
+    else if (!(ep = m.net.connectLocal(d.port))) why = 'the game is not listening on port ' + d.port + ' (this edition does not use it)';
+  } catch (e) { why = String(e && e.message || e); ep = null; }
+  if (!ep) { post('sockState', { id: d.id, state: 'failed', why }); return; }
+  socks.set(d.id, ep);
+  if (!sockTimer) sockTimer = setInterval(sockPoll, 25);
+  post('sockState', { id: d.id, state: 'open' });
+  if (blocked) requestRun(0);                         // (the game's socket thread is waiting in accept)
+}
+function sockSend(d) {
+  const ep = socks.get(d.id); if (!ep) return;
+  ep.send(new Uint8Array(d.bytes));
+  if (cfg && cfg.debug) log('[socket] Flash sent ' + d.bytes.byteLength + ' bytes to the game (connection ' + d.id + ')');
+  if (blocked) requestRun(0);
+}
+function sockClose(d) {
+  const ep = socks.get(d.id); if (!ep) return;
+  ep.close(); socks.delete(d.id);
+  if (blocked) requestRun(0);
+}
+
 /* ------------------------------------------------------------------------------------------------ messages from the page */
 self.onmessage = ev => {
   const d = ev.data;
@@ -499,9 +537,13 @@ self.onmessage = ev => {
     case 'videoEnded': if (m && m.flash) { m.flash.videoEnded(d.id); if (blocked) requestRun(0); } break;                // the page's video has played to its end (or could not be played)
     case 'flashSkip': case 'flashFailed': if (m && m.flash) { m.flash.skip(d.id); if (blocked) requestRun(0); } break;  // the player skipped it / it could not be shown
     case 'debugPutFile': if (cfg && cfg.debug && m) m.putUserFile(m.installRoot + '\\' + String(d.path).replace(/\//g, '\\'), new Uint8Array(d.bytes)); break;      // (tests) a file in the game's folder
+    case 'debugTrace': if (cfg && cfg.debug && m) { m.trace = !!d.on; m.callCount = 0; m.traceLimit = d.limit || 400; m.traceSkip = new Set(d.skip || []); } break;      // (tests) the Windows calls the game makes, in the log
     case 'debugFlashApp':                             // (tests) the game runs one of its Flash applications on a file (2.0.3)
       if (cfg && cfg.debug && m && m.flash && m.flash.debugRunApp) { const go = () => { if (!m.flash.debugRunApp(d.path)) setTimeout(go, 50); else if (blocked) requestRun(0); }; go(); }
       break;
+    case 'sockOpen': sockOpen(d); break;                                                                                // Flash opens a connection to the game's listening socket
+    case 'sockSend': sockSend(d); break;
+    case 'sockClose': sockClose(d); break;
     case 'flashFile': {                               // a Flash movie asked for a file by its relative address: it is looked for in the game's data (the game's own folders)
       let r = null;
       try { if (m && m.flash && m.flash.readFile) r = m.flash.readFile(d.path, d.from); } catch (e) { r = null; }

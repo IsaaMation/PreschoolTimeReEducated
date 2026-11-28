@@ -131,7 +131,7 @@
             case 4: v = f(m, c.H.rd32(sp), c.H.rd32(sp + 4), c.H.rd32(sp + 8), c.H.rd32(sp + 12)); break;
             default: { const a = new Array(n); for (let i = 0; i < n; i++) a[i] = c.H.rd32(sp + 4 * i); v = f(m, ...a); }
           }
-          if (m.trace && m.callCount++ < m.traceLimit && !m.traceSkip.has(name)) {
+          if (m.trace && !m.traceSkip.has(name) && m.callCount++ < m.traceLimit) {
             let args = ''; for (let i = 0; i < Math.min(n, 8); i++) args += (i ? ', ' : '') + '0x' + (c.H.rd32(sp + 4 * i) >>> 0).toString(16);
             m.log('  [api] ' + name + '(' + args + ') -> ' + (typeof v === 'number' ? '0x' + (v >>> 0).toString(16) : v === undefined ? '' : String(v)));
           }

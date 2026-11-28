@@ -235,7 +235,8 @@
     m.def(FP, 'GetUsingFlashVersion', 0, () => FLASH_VERSION);
 
     // ---- the exported functions
-    m.def(FP, 'FPC_PutFlashVarsA', 2, (m, h, s) => { win(h).vars = m.cstr(s); log('vars ' + win(h).vars); return 1; });
+    // (an application's variables come AFTER its movie: 2.0.6's loop puts the movie in, shows the window and only then hands over "Basepath=...", so the page is told again)
+    m.def(FP, 'FPC_PutFlashVarsA', 2, (m, h, s) => { const w = win(h); w.vars = m.cstr(s); log('vars ' + w.vars); if (w.loaded) emit('vars', w, { vars: w.vars }); return 1; });
     m.def(FP, 'FPC_PutAllowScriptAccessA', 2, (m, h, s) => { win(h).access = m.cstr(s); return 1; });
     m.def(FP, 'FPC_LoadMovieA', 3, (m, h, layer, s) => { const w = win(h); fromFile(w, m.cstr(s)); return 1; });
     m.def(FP, 'FPC_Play', 1, (m, h) => { const w = win(h); beginPlay(w); log('play'); emit('play', w); if (flash.onPlay) flash.onPlay(w); return 1; });
@@ -294,11 +295,13 @@
     flash.readFile = (path, fromKey) => {
       let want = String(path || '').split('#')[0].split('?')[0];
       try { want = decodeURIComponent(want); } catch (e) { /* as it is */ }
+      // A file the game wrote itself (its config.ini, saved pictures and so on) is the one a movie must get, whatever else the data holds under that name:
+      // 2.0.6's Manny reads the game's config.ini to see which lesson plans there are.
+      const rel = want.replace(/\\/g, '/').replace(/^\/+/, '').replace(/^(\.\/)+/, '');
+      const own = m.userFiles && m.userFiles.get(m.installRoot.toLowerCase() + '\\' + rel.replace(/\//g, '\\').toLowerCase());
+      if (own) return { key: rel.toLowerCase(), bytes: own.data.slice(0, own.size) };
       const key = flash.resolveFile(want, fromKey);
-      if (key === null) {                                                                // (a file the game wrote itself: saved pictures and so on)
-        const u = m.userFiles && m.userFiles.get(m.installRoot.toLowerCase() + '\\' + want.replace(/\//g, '\\').toLowerCase());
-        return u ? { key: want.toLowerCase(), bytes: u.data.slice(0, u.size) } : null;
-      }
+      if (key === null) return null;
       const h = m.vfs.open(key); if (!h) return null;
       return { key, bytes: new Uint8Array(h.read(0, h.size)) };
     };

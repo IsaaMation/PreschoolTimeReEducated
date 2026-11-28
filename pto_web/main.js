@@ -6,6 +6,9 @@
  *   ?avoffset=MS  hold the picture back by MS more (or less, when negative) than the automatic setting, if the sound is not in step
  *   ?ruffle=URL  where Ruffle (the Flash player) is, default "ruffle/ruffle.js";  ?ruffle=off  never use it (Flash movies are skipped)
  *   ?flashrenderer=canvas|webgl|wgpu-webgl|webgpu  the graphics backend Ruffle is asked to use (it chooses itself by default): for a movie that shows white
+ *   ?nomannyfix  serve Manny's movies (2.0.6) as they are, without the changes of mannyfix.js;  ?flashnet  let Flash applications reach the internet
+ *   ?debug&tracenet  the game's network calls (sockets) in the log
+ *   ?debug&tracefiles  the files the game opens, the windows it makes and other details of its Windows calls in the log (a lot of lines)
  * The start card also has a Nickname field: the name the game shows instead of "Player". It is kept in this browser only (localStorage 'pto-nickname'). */
 (() => {
   'use strict';
@@ -150,6 +153,7 @@
       case 'flash': onFlash(d.ev); break;
       case 'videoRoom': onVideoRoom(d); break;
       case 'flashFile': onFlashFile(d); break;
+      case 'sockState': case 'sockData': onSock(d); break;
       case 'error': problem(d); break;
       case 'exit': over = true; showOverlay('The game has closed.', 'Play again'); break;
       case 'wiped': location.reload(); break;
@@ -218,7 +222,7 @@
   }
   const movieFile = n => (n && n !== '(memory)') ? String(n).split(/[\\/]/).pop() : 'movie.swf';
   const sent = [];                                     // debug: what was sent to the worker about movies
-  const post = m => { if (debug) { sent.push(m); if (sent.length > 100) sent.shift(); } if (worker) worker.postMessage(m); };
+  const post = (m, transfer) => { if (debug) { sent.push(m); if (sent.length > 100) sent.shift(); } if (worker) worker.postMessage(m, transfer || []); };
   const seen = [];                                     // debug: what happened to each movie, and when (ms since the page opened)
   function rec(mv, k, extra) {
     if (!debug) return;
@@ -236,7 +240,7 @@
     switch (ev.op) {
       case 'load': {
         if (mv) closeMovie(mv);
-        movies.set(ev.id, mv = { id: ev.id, name: movieFile(ev.name), src: ev.src || '', modal: !!ev.modal, bytes: ev.bytes || null, vars: ev.vars || '', interactive: !!ev.interactive, video: ev.video || '', rect: ev.rect || null, playing: false, visible: !ev.rect || ev.rect.visible !== false, api: null, el: null, started: false, timer: 0, t0: performance.now() });
+        movies.set(ev.id, mv = { id: ev.id, name: movieFile(ev.name), src: ev.src || '', modal: !!ev.modal, bytes: ev.bytes || null, vars: ev.vars || '', varsSeen: !!ev.vars, waitVars: 0, interactive: !!ev.interactive, video: ev.video || '', rect: ev.rect || null, playing: false, visible: !ev.rect || ev.rect.visible !== false, api: null, el: null, started: false, timer: 0, t0: performance.now() });
         rec(mv, 'load');
         const i = ev.info;
         fnote('movie ' + hex(ev.id) + ' "' + mv.name + '" arrives: ' + (ev.bytes ? ev.bytes.byteLength : 0) + ' bytes, '
@@ -246,6 +250,7 @@
           + (ev.rect ? '; window ' + [ev.rect.x, ev.rect.y, ev.rect.w, ev.rect.h].join(',') + (ev.rect.visible === false ? ' (hidden)' : '') : ''));
         break;
       }
+      case 'vars': if (mv) { mv.vars = ev.vars || ''; mv.varsSeen = true; fnote('movie ' + hex(mv.id) + ' gets its variables: ' + mv.vars.slice(0, 200)); if (mv.waitVars) { clearTimeout(mv.waitVars); mv.waitVars = 0; showMovie(mv); } } break;
       case 'play': if (mv) { mv.playing = true; rec(mv, 'play'); if (ev.rect) { mv.rect = ev.rect; mv.visible = ev.rect.visible !== false; } showMovie(mv); } break;
       case 'show': if (mv) { if (ev.rect) mv.rect = ev.rect; mv.visible = !!ev.visible; if (mv.visible) showMovie(mv); else hideMovie(mv); } break;
       case 'stop': if (mv) { mv.playing = false; setPaused(mv, true); } break;
@@ -269,6 +274,10 @@
       mv.hidden = false; mv.el.style.display = ''; setPaused(mv, false); layoutMovie(mv); post({ type: 'flashStarted', id: mv.id }); return;
     }
     if (warmState === 'failed') { failMovie(mv, new Error('Ruffle could not be started on this page')); return; }
+    if (mv.modal && !mv.varsSeen) {                    // an application's variables (its folder) are handed over a moment after its movie: it must not start before it has them
+      if (!mv.waitVars) mv.waitVars = setTimeout(() => { mv.waitVars = 0; mv.varsSeen = true; showMovie(mv); }, VARS_WAIT_MS);
+      return;
+    }
     let el, api;
     try {
       el = ruffleApi.createPlayer(); api = el.ruffle ? el.ruffle() : el;
@@ -289,7 +298,7 @@
     try {
       const r = api.load({
         data: mv.bytes, swfFileName: mv.name, base: FLASH_FILES + dirOf(mv.src), autoplay: 'on', unmuteOverlay: 'visible', splashScreen: false, preloader: false, letterbox: 'on',
-        contextMenu: 'off', warnOnUnsupportedContent: false, openUrlMode: 'deny', showSwfDownload: false, parameters: mv.vars || undefined, ...rendererOpt,
+        contextMenu: 'off', warnOnUnsupportedContent: false, openUrlMode: 'deny', showSwfDownload: false, parameters: appVars(mv) || undefined, urlRewriteRules: FILE_URL_RULES, socketProxy: SOCKET_PROXY, ...rendererOpt,
       });
       if (r && r.catch) r.catch(e => { if (!settled) { settled = true; clearTimeout(mv.timer); failMovie(mv, e); } });
     } catch (e) { settled = true; clearTimeout(mv.timer); failMovie(mv, e); return; }
@@ -414,7 +423,7 @@
   }
   function hideMovie(mv) { setPaused(mv, true); if (mv.el) mv.el.style.display = 'none'; mv.hidden = true; flashChanged(); }
   function closeMovie(mv, keepRecord) {
-    clearTimeout(mv.timer); clearTimeout(mv.skipTimer);
+    clearTimeout(mv.timer); clearTimeout(mv.skipTimer); clearTimeout(mv.waitVars); mv.waitVars = 0;
     if (mv.api && mv.api.dispose) { try { mv.api.dispose(); } catch (e) { /* ignore */ } }     // (a video: stop it, let go of the file)
     if (mv.el) { try { mv.el.remove(); } catch (e) { /* ignore */ } }
     mv.el = mv.api = null; mv.started = false;
@@ -445,6 +454,19 @@
   const flashReq = new Map(); let flashReqN = 0, fetchWrapped = false;
   const hex = id => (id >>> 0).toString(16);
   const dirOf = k => { const i = (k || '').lastIndexOf('/'); return i < 0 ? '' : k.slice(0, i + 1); };
+  /** The game starts every application with the variable "Basepath", the application's own folder as a Windows path ("C:/ProgramData/.../Data/Manny/"); 2.0.6's Manny builds
+   * the addresses of everything it loads from it (and of the game's config.ini, in the folder above).  Here it is the same folder below `flashfiles/` on this page. */
+  function appVars(mv) {
+    const v = mv.vars || '';
+    if (!/(^|&)Basepath=/i.test(v)) return v;
+    return v.replace(/(^|&)Basepath=[^&]*/i, (all, pre) => pre + 'Basepath=' + FLASH_FILES + dirOf(mv.src));
+  }
+  /** Manny asks for some files as "file:///" + Basepath + name; with the page's address in Basepath that reads "file:///http://...", which Ruffle cannot fetch: it is made the plain address. */
+  const VARS_WAIT_MS = 400;                            // (how long an application waits for its variables before it starts without them)
+  /** ?nomannyfix: serve Manny's movies as the game has them, without the changes of mannyfix.js (to see what Ruffle does with the originals).
+   * ?flashnet: let Flash applications reach the internet (by default they get "not found": what they ask for, Manny's list of sing-along videos, is long gone, and a game should not call out unasked). */
+  const noMannyFix = params.has('nomannyfix'), flashNet = params.has('flashnet');
+  const FILE_URL_RULES = [[/^file:\/\/\/(https?:\/\/.*)$/i, '$1']];
   const MIME = { swf: 'application/x-shockwave-flash', xml: 'text/xml', txt: 'text/plain', mp3: 'audio/mpeg', wav: 'audio/wav', flv: 'video/x-flv', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif' };
   const mimeOf = p => { const x = /\.([a-z0-9]+)$/i.exec(p); return (x && MIME[x[1].toLowerCase()]) || 'application/octet-stream'; };
   const withUrl = (resp, url) => { try { Object.defineProperty(resp, 'url', { value: url }); } catch (e) { /* ignore */ } return resp; };
@@ -458,13 +480,31 @@
       post({ type: 'flashFile', req, path, from: newestMovieSrc() });
     });
   }
-  function onFlashFile(d) {
+  /** Manny's movies that Ruffle cannot run as they are get small changes on the way (mannyfix.js; each change is checked against the exact file it was made for). A file the changes do not fit is served untouched. */
+  async function mannyFixed(path, bytes) {
+    if (noMannyFix || !window.MannyFix) return null;
+    try { return await window.MannyFix.patch(path, bytes); } catch (e) { return { note: 'not patched: ' + (e && e.message || e) }; }
+  }
+  async function onFlashFile(d) {
     const r = flashReq.get(d.req); if (!r) return;
     flashReq.delete(d.req); clearTimeout(r.t);
     const ms = Math.round(performance.now() - r.t0);
     if (!d.bytes) { fnote('file "' + r.path + '": not in the game\'s data (' + ms + ' ms)'); r.resolve(withUrl(new Response('not found', { status: 404, statusText: 'Not Found' }), r.url)); return; }
-    fnote('file "' + r.path + '": served from the game\'s data as ' + d.key + ', ' + d.bytes.byteLength + ' bytes (' + ms + ' ms)');
-    r.resolve(withUrl(new Response(d.bytes, { status: 200, headers: { 'Content-Type': mimeOf(r.path), 'Content-Length': String(d.bytes.byteLength) } }), r.url));
+    try {
+      let bytes = d.bytes, how = '';
+      const fixed = await mannyFixed(r.path, bytes);
+      if (fixed) { if (fixed.bytes) bytes = fixed.bytes; how = '; ' + fixed.note; }
+      fnote('file "' + r.path + '": served from the game\'s data as ' + d.key + ', ' + bytes.byteLength + ' bytes (' + ms + ' ms' + how + ')');
+      r.resolve(withUrl(new Response(bytes, { status: 200, headers: { 'Content-Type': mimeOf(r.path), 'Content-Length': String(bytes.byteLength) } }), r.url));
+    } catch (e) {
+      fnote('file "' + r.path + '": ' + (e && e.message || e));
+      r.resolve(withUrl(new Response('error', { status: 500, statusText: 'Error' }), r.url));
+    }
+  }
+  /** an address on the internet (not this page's own server, not Ruffle's own files) */
+  function isOutsideRequest(url) {
+    if (!/^https?:/i.test(url) || /\.(wasm|js|map)([?#]|$)/i.test(url)) return false;
+    try { return new URL(url, document.baseURI).origin !== location.origin; } catch (e) { return false; }
   }
   /** Ruffle fetches through window.fetch (looked up at every call), so wrapping it is enough; everything else goes on to the real fetch */
   function wrapFetch() {
@@ -473,6 +513,7 @@
     window.fetch = function (input, init) {
       let url = ''; try { url = typeof input === 'string' ? input : (input && input.url) || String(input); } catch (e) { /* ignore */ }
       if (url.startsWith(FLASH_FILES)) return flashFileResponse(url);
+      if (movies.size && !flashNet && isOutsideRequest(url)) { fnote('fetch ' + url.slice(0, 160) + ' refused: Flash applications get no internet here (?flashnet allows it)'); return Promise.resolve(withUrl(new Response('not found', { status: 404, statusText: 'Not Found' }), url)); }
       const p = real.apply(this, arguments);
       if (debug && movies.size && url && !/\.(wasm|js|map)([?#]|$)/i.test(url)) p.then(r => fnote('fetch ' + url.slice(0, 160) + ' -> ' + r.status), e => fnote('fetch ' + url.slice(0, 160) + ' failed: ' + (e && e.message || e)));
       return p;
@@ -501,6 +542,7 @@
    * game has to notice, which takes a moment; if it has not closed the movie's window after a few seconds the picture is hidden anyway, so
    * that what is under it (the game's own screen, with its Back button) can be used. */
   const flashShown = () => { for (const mv of movies.values()) if (mv.el && !mv.hidden) return true; return false; };
+  const flashAppShown = () => { for (const mv of movies.values()) if (mv.el && !mv.hidden && mv.modal) return true; return false; };       // (an application: the game waits for its Back button)
   function skipMovies(how) {
     let n = 0;
     for (const mv of movies.values()) if (mv.el && !mv.hidden) {
@@ -517,6 +559,73 @@
     }
     return n;
   }
+  /* ---- Manny sends the pictures it wants printed (the Craft Box's templates, the Painting Set's picture) or kept to the game, over a socket to "localhost:12345": the game listens
+   * there for its Flash applications.  Ruffle opens such a socket through a WebSocket (its option socketProxy); the page gives it a stand-in for one, which is not on the internet at
+   * all: it hands what Ruffle sends to the worker, which puts it into the game's own listening socket, and what the game answers comes back the same way. */
+  const SOCK_URL = 'ws://pto-bridge.invalid/';
+  const SOCKET_PROXY = []; for (const host of ['localhost', '127.0.0.1']) SOCKET_PROXY.push({ host, port: 12345, proxyUrl: SOCK_URL + '12345' });
+  const bridgeSocks = new Map(); let bridgeSockN = 0;
+  class BridgeSocket extends EventTarget {
+    constructor(url) {
+      super();
+      this.url = url; this.readyState = 0; this.binaryType = 'blob'; this.bufferedAmount = 0; this.protocol = ''; this.extensions = '';
+      this.onopen = this.onmessage = this.onclose = this.onerror = null;
+      this.id = ++bridgeSockN; this.sent = 0; this.got = 0; this.out = Promise.resolve();
+      bridgeSocks.set(this.id, this);
+      const port = +((/(\d+)$/.exec(url) || [0, 0])[1]);
+      fnote('socket ' + this.id + ': Flash opens a connection to the game (port ' + port + ')');
+      post({ type: 'sockOpen', id: this.id, port });
+    }
+    fire(e) { try { this.dispatchEvent(e); } catch (x) { /* a listener's own trouble */ } const h = this['on' + e.type]; if (typeof h === 'function') { try { h.call(this, e); } catch (x) { /* ditto */ } } }
+    send(data) {
+      if (this.readyState !== 1) throw new DOMException('the connection is not open', 'InvalidStateError');
+      this.sent += data && (data.size !== undefined ? data.size : data.byteLength !== undefined ? data.byteLength : String(data).length) || 0;
+      // (one after the other: a Blob is read in the background, and the order of what Flash sends must hold)
+      this.out = this.out.then(async () => {
+        let u8;
+        if (typeof Blob !== 'undefined' && data instanceof Blob) u8 = new Uint8Array(await data.arrayBuffer());
+        else if (data instanceof ArrayBuffer) u8 = new Uint8Array(data.slice(0));
+        else if (ArrayBuffer.isView(data)) u8 = new Uint8Array(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
+        else u8 = new TextEncoder().encode(String(data));
+        post({ type: 'sockSend', id: this.id, bytes: u8.buffer }, [u8.buffer]);
+      }).catch(e => fnote('socket ' + this.id + ': could not pass on what Flash sent: ' + (e && e.message || e)));
+    }
+    close() {
+      if (this.readyState >= 2) return;
+      this.readyState = 2;
+      this.out = this.out.then(() => post({ type: 'sockClose', id: this.id }));
+      setTimeout(() => this.ended(1000), 0);
+    }
+    ended(code) {
+      if (this.readyState === 3) return;
+      const open = this.readyState === 1 || this.readyState === 2; this.readyState = 3; bridgeSocks.delete(this.id);
+      fnote('socket ' + this.id + ': closed; Flash sent ' + this.sent + ' bytes, the game sent ' + this.got + ' bytes');
+      this.fire(new CloseEvent('close', { code: code || 1006, wasClean: open && code === 1000 }));
+    }
+  }
+  Object.assign(BridgeSocket, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 });
+  Object.assign(BridgeSocket.prototype, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 });
+  function onSock(d) {
+    const s = bridgeSocks.get(d.id); if (!s) return;
+    if (d.type === 'sockData') {
+      s.got += d.bytes.byteLength;
+      const data = s.binaryType === 'arraybuffer' ? d.bytes : new Blob([d.bytes]);
+      s.fire(new MessageEvent('message', { data }));
+    } else if (d.state === 'open') {
+      if (s.readyState === 0) { s.readyState = 1; fnote('socket ' + s.id + ': the game took the connection'); s.fire(new Event('open')); }
+    } else if (d.state === 'failed') {
+      fnote('socket ' + s.id + ': refused: ' + (d.why || 'the game is not listening'));
+      s.fire(new Event('error')); s.ended(1006);
+    } else if (d.state === 'closed') s.ended(1000);
+  }
+  /** a WebSocket to the stand-in's address is the bridge; every other WebSocket is the browser's own */
+  (function installSocketBridge() {
+    const Real = window.WebSocket; if (typeof Real !== 'function' || Real.__ptoBridge) return;
+    const Stand = function WebSocket(url, protocols) { return typeof url === 'string' && url.startsWith(SOCK_URL) ? new BridgeSocket(url) : new Real(url, protocols); };
+    Stand.prototype = Real.prototype; Object.assign(Stand, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3, __ptoBridge: true });
+    Object.defineProperty(Stand, Symbol.hasInstance, { value: o => o instanceof BridgeSocket || Function.prototype[Symbol.hasInstance].call(Real, o) });      // (the stand-in is a WebSocket for anything that asks)
+    window.WebSocket = Stand;
+  })();
   flashSkip.onclick = () => { skipMovies('Skip pressed'); cvs.focus(); };
   wrapFetch();
   const flashRelayout = () => { for (const mv of movies.values()) if (mv.el && !mv.whole) layoutMovie(mv); };
@@ -601,7 +710,7 @@
     try { localStorage.setItem(CHOICE_KEY, JSON.stringify({ edition, lesson })); } catch (e) { /* not kept */ }
     try { await setupAudio(); } catch (e) { sink = null; logLines.push('[page] sound unavailable: ' + e.message); }
     await loadRuffle();                                 // (started when the page opened; normally long done)
-    worker.postMessage({ type: 'init', edition, lessons: lesson ? [lesson] : [], nickname, debug, nocomp: debug && params.has('nocomp'), nohle: debug && params.get('hle') === 'off', threads: debug ? params.get('threads') || '' : '', fixedDate: params.get('fixeddate') || '', flash: ruffleApi ? 'ruffle' : 'none' });
+    worker.postMessage({ type: 'init', edition, lessons: lesson ? [lesson] : [], nickname, debug, nocomp: debug && params.has('nocomp'), nohle: debug && params.get('hle') === 'off', traceNet: debug && params.has('tracenet'), traceFiles: debug && params.has('tracefiles'), threads: debug ? params.get('threads') || '' : '', fixedDate: params.get('fixeddate') || '', flash: ruffleApi ? 'ruffle' : 'none' });
     if (debug) { $('log').style.display = 'block'; $('copyLogBtn').classList.remove('hide'); }
     warmRuffle();
   }
@@ -705,7 +814,16 @@
   const kb = $('kb'), kbBtn = $('kbBtn');
   document.addEventListener('keydown', e => {
     if (printOpen()) { if (e.key === 'Escape') closePrint(); return; }
-    if (e.key === 'Escape' && !e.repeat && flashShown()) skipMovies('Esc pressed');                  // (the game gets the key too, as before)
+    if (e.key === 'Escape') {
+      if (escKept) { e.preventDefault(); return; }                                                    // (the same press, held down: its repeats are not the game's either)
+      if (!e.repeat && flashShown()) {
+        // A movie: the game gets the key too (its own "Press Escape to Skip"). An application: Esc is its Back button and nothing else; the game would otherwise get the key
+        // when the application is gone and take it for a press of its own, and leave the screen that it has come back to (2.0.6: the lesson card that Manny was started from).
+        const app = flashAppShown();
+        skipMovies('Esc pressed');
+        if (app) { escKept = true; e.preventDefault(); return; }
+      }
+    }
     if (!ready || over || e.target === kb || e.isComposing || e.keyCode === 229) return;
     if (e.target && e.target.tagName === 'INPUT') return;                                           // the timing slider uses its own keys
     if (e.metaKey || ((e.ctrlKey || e.altKey) && !e.getModifierState('AltGraph'))) return;          // browser / system shortcuts (AltGr makes characters)
@@ -719,11 +837,14 @@
   });
   document.addEventListener('keyup', e => {
     if (e.target === kb) return;
+    if (e.key === 'Escape' && escKept) { escKept = false; e.preventDefault(); return; }                // (the end of the press that was Back)
     const k = keyFields(e);
     if (!downKeys.has(k.vk)) return;
     downKeys.delete(k.vk); send(Object.assign({ type: 'keyup' }, k)); e.preventDefault();
   });
+  let escKept = false;                                // Esc was pressed as "Back" for a Flash application and is still down: the game gets neither it nor its repeats nor its release
   const releaseAll = () => {
+    escKept = false;
     for (const vk of downKeys) send({ type: 'keyup', vk }); downKeys.clear();
     for (const b of [0, 2]) if (buttons & (1 << b)) send({ type: 'mouseup', button: b });
     buttons = 0;
@@ -781,7 +902,9 @@
   function closePrint() { pv.classList.add('hide'); document.body.classList.remove('printing'); cvs.focus(); }
   function showPrint(d) {
     releaseAll();
-    const box = $('printPages'); box.textContent = '';
+    // A document that arrives while the window is open joins the pages that are already there: Manny's Craft Box prints a template in two documents, a few seconds apart,
+    // and the first one must not be lost under the second.
+    const box = $('printPages'); if (!(printOpen() && box.childElementCount)) box.textContent = '';
     for (const p of d.pages) {
       const src = document.createElement('canvas'); src.width = p.w; src.height = p.h;
       src.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(p.buf), p.w, p.h), 0, 0);
@@ -794,8 +917,11 @@
   }
   $('printNow').onclick = () => window.print();
   $('printSave').onclick = () => {
-    const c = $('printPages').querySelector('canvas');
-    if (c) c.toBlob(b => { const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'preschool-time-picture.png'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 10000); }, 'image/png');
+    const cs = [...$('printPages').querySelectorAll('canvas')];
+    cs.forEach((c, i) => setTimeout(() => c.toBlob(b => {          // (one picture for each page; a second download is started a moment after the first)
+      const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'preschool-time-picture' + (cs.length > 1 ? '-' + (i + 1) : '') + '.png';
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    }, 'image/png'), i * 400));
   };
   $('printClose').onclick = closePrint;
 
